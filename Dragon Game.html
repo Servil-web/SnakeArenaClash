@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="en"></html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snake Clash Arena</title>
+  <style>
+    :root{
+      --bg:#050607; --panel:#0b0f12; --text:#cfdbe6; --muted:#6f7b84;
+      --good:#2fa144; --grid:rgba(255,255,255,.02);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:radial-gradient(circle at top,#0b0f12,var(--bg));
+      color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center;
+    }
+    .app{width:min(1600px,98vw); padding:10px}
+    .screen{
+      display:none; background:rgba(22,27,34,.92); border:1px solid rgba(255,255,255,.08);
+      border-radius:18px; box-shadow:0 20px 60px rgba(0,0,0,.4); overflow:hidden;
+    }
+    .screen.active{display:block}
+    .menu,.game-wrap{padding:16px}
+    h1,h2,h3{margin:0 0 12px}
+    p{color:var(--muted); margin:6px 0}
+    .card{
+      background:rgba(6,8,10,.95); border:1px solid rgba(255,255,255,.03);
+      border-radius:14px; padding:14px; flex:1 1 250px;
+    }
+    .btn{
+      border:0; border-radius:12px; padding:12px 16px; cursor:pointer; color:white;
+      background:linear-gradient(180deg,#2f81f7,#1f6feb); font-weight:700; margin-right:8px; margin-bottom:8px;
+    }
+    .btn.secondary{background:linear-gradient(180deg,#30363d,#21262d)}
+    .btn.danger{background:linear-gradient(180deg,#ff7b72,#f85149)}
+    .btn:disabled{opacity:.45; cursor:not-allowed}
+    select, input{
+      width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
+      background:#0d1117; color:white; margin-top:8px;
+    }
+    .players-grid{
+      display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; margin-top:16px;
+    }
+    .player-box{
+      border-radius:14px; padding:14px; background:#11161d; border:1px solid rgba(255,255,255,.08);
+    }
+    .small{font-size:.92rem; color:var(--muted)}
+    .hud{
+      display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:10px; margin-bottom:12px;
+    }
+    .hud-item{
+      background:rgba(31,38,48,.9); border:1px solid rgba(255,255,255,.08);
+      border-radius:12px; padding:10px 12px; font-size:.95rem;
+    }
+    .bar-wrap{
+      margin-top:8px; height:12px; background:rgba(255,255,255,.08); border-radius:999px; overflow:hidden;
+      border:1px solid rgba(255,255,255,.08);
+    }
+    .bar{height:100%; width:0%; background:linear-gradient(90deg,#ff6b6b,#f59e0b)}
+    .bar.ready{width:100%; background:linear-gradient(90deg,#2f81f7,#3fb950)}
+    canvas{
+      width:100%; height:min(78vh,900px);
+      /* playfield background: grid overlays on top of a semi-transparent dark image */
+      background:
+        linear-gradient(to right,var(--grid) 1px,transparent 1px),
+        linear-gradient(to bottom,var(--grid) 1px,transparent 1px),
+        linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)),
+        url("Resources/background.png"),
+        #030406;
+      background-size:40px 40px,40px 40px,cover,cover,auto;
+      background-repeat:repeat,repeat,no-repeat,no-repeat,no-repeat;
+      background-position:center center,center center,center center,center center;
+      border-radius:14px; display:block;
+    }
+    .legend{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
+    .pill{
+      border-radius:999px; padding:6px 10px; background:rgba(255,255,255,.08);
+      font-size:.85rem; color:#dbe4ee;
+    }
+    .status{
+      margin-top:12px; padding:12px; border-radius:12px; background:rgba(255,255,255,.05);
+    }
+    .titlebar{
+      display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px;
+    }
+    .winner{font-size:1.4rem; color:var(--good); font-weight:800}
+    .controls-list{display:grid; gap:8px; margin-top:10px}
+    .control-row{display:grid; grid-template-columns:110px 1fr 1fr 1fr; gap:8px; align-items:center}
+    .control-row span{font-size:.9rem; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div id="menuScreen" class="screen active">
+      <div class="menu">
+        <div class="titlebar">
+          <div>
+            <h1>Snake Clash Arena</h1>
+            <p>Local multiplayer for 2–4 players.</p>
+          </div>
+          <div class="small">Controls: turn left / turn right / special</div>
+          <div>
+            <button class="btn secondary" id="musicBtnMenu">Music</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Settings</h2>
+          <label>
+            Player count
+            <select id="playerCount">
+              <option value="2">2 players</option>
+              <option value="3">3 players</option>
+              <option value="4">4 players</option>
+            </select>
+          </label>
+          <div style="margin-top:12px;">
+            <button class="btn" id="setupBtn">Setup players</button>
+            <button class="btn secondary" id="controlsBtn">Customize controls</button>
+          </div>
+        </div>
+
+        <div id="controlsArea" class="card" style="margin-top:16px; display:none;">
+          <h3>Custom controls</h3>
+          <div class="small">Click a field and press a key to change.</div>
+          <div id="controlsList" class="controls-list"></div>
+        </div>
+
+        <div id="setupArea" class="players-grid"></div>
+
+        <div style="margin-top:16px;">
+          <button class="btn danger" id="startBtn" disabled>Start game</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <h3>Snake types</h3>
+          <div class="legend">
+            <span class="pill">Shooter — Explosive projectile</span>
+            <span class="pill">Spiral — Spiraling projectile</span>
+            <span class="pill">Spiker — Creates spikes</span>
+            <span class="pill">Jumper — Fly for 1 s</span>
+            <span class="pill">Speedee — Speed boost</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="gameScreen" class="screen">
+      <div class="game-wrap">
+        <div class="titlebar">
+          <div>
+            <h2>Match in progress</h2>
+            <p id="gameHint">Use two keys to turn the snake. Your tail remains an obstacle.</p>
+          </div>
+          <div>
+            <button class="btn secondary" id="musicBtn">Music</button>
+            <button class="btn secondary" id="restartBtn">Back to menu</button>
+          </div>
+        </div>
+
+        <div id="hud" class="hud"></div>
+        <canvas id="gameCanvas" width="1600" height="900"></canvas>
+        <div id="status" class="status">Ready.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const TYPES = [
+      { id:"killer", name:"Shooter", color:"#ff4d4d", special:"Explosive projectile" },
+      { id:"crook", name:"Spiral", color:"#8b5cf6", special:"Spiraling projectile" },
+      { id:"spiker", name:"Spiker", color:"#f59e0b", special:"Creates spikes" },
+      { id:"jumper", name:"Jumper", color:"#22c55e", special:"Fly for 1 s" },
+      { id:"speedee", name:"Speedee", color:"#f97316", special:"Speed boost" }
+    ];
+
+    const DEFAULT_CONTROLS = [
+      { left:"KeyA", right:"KeyD", special:"Space", label:"Player 1: A / D + Space" },
+      { left:"KeyJ", right:"KeyL", special:"ShiftLeft", label:"Player 2: J / L + Shift" },
+      { left:"KeyF", right:"KeyH", special:"KeyT", label:"Player 3: F / H + T" },
+      { left:"Digit4", right:"Digit6", special:"Enter", label:"Player 4: 4 / 6 + Enter" }
+    ];
+
+    const menuScreen = document.getElementById("menuScreen");
+    const gameScreen = document.getElementById("gameScreen");
+    const playerCountEl = document.getElementById("playerCount");
+    const setupBtn = document.getElementById("setupBtn");
+    const controlsBtn = document.getElementById("controlsBtn");
+    const controlsArea = document.getElementById("controlsArea");
+    const controlsList = document.getElementById("controlsList");
+    const setupArea = document.getElementById("setupArea");
+    const startBtn = document.getElementById("startBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const hudEl = document.getElementById("hud");
+    const statusEl = document.getElementById("status");
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Simple retro music synth using WebAudio (fallback to silence if not supported)
+    let audioCtx = null;
+    let musicGain = null;
+    let sfxGain = null;
+    let musicNodes = [];
+    let musicPlaying = false;
+
+    function initMusic() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        musicGain = audioCtx.createGain();
+        musicGain.gain.value = 0.12; // modest volume
+        musicGain.connect(audioCtx.destination);
+        // SFX gain (separate control, a bit louder than music)
+        sfxGain = audioCtx.createGain();
+        sfxGain.gain.value = 0.6;
+        sfxGain.connect(audioCtx.destination);
+      } catch (e) {
+        audioCtx = null;
+      }
+    }
+
+function startMusic() {
+  if (!audioCtx) initMusic();
+  if (!audioCtx || musicPlaying) return;
+
+  const now = audioCtx.currentTime;
+  const pattern = [23,21,23,18,16,18,11,23,21,23,18,16,18,11,23,25,26,25,26,23,25,23,25,21,23,21,23,19,23,23,33,35,30,28,30,23,35,33,35,30,28,30,23,35,37,38,37,38,35,37,35,37,33,35,33,35,31,35];
+  const baseFreq = 220;
+  const noteDur = 0.2;
+  const dur = 0.22;
+
+  // helper to schedule one phrase
+  function schedulePhrase(startTime) {
+    for (let i = 0; i < pattern.length; i++) {
+      const t = startTime + i * noteDur;
+      const osc = audioCtx.createOscillator();
+      const det = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = 'square';
+      det.type = 'sawtooth';
+      osc.frequency.value = baseFreq * Math.pow(2, pattern[i] / 12);
+      det.frequency.value = osc.frequency.value * 0.99;
+      g.gain.value = 0.0001;
+      osc.connect(g); det.connect(g); g.connect(musicGain);
+      osc.start(t); det.start(t);
+      g.gain.setValueAtTime(0.12, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.stop(t + dur + 0.05); det.stop(t + dur + 0.05);
+      musicNodes.push({ osc, det, g });
+    }
+  }
+
+  // schedule first phrase
+  schedulePhrase(now);
+  musicPlaying = true;
+
+  const phraseMs = Math.round(pattern.length * noteDur * 1000);
+
+  // schedule repeating phrases (avoid drift by using setTimeout loop)
+  function loopSchedule() {
+    // disconnect previous finished nodes
+    for (const n of musicNodes) {
+      try { n.osc.disconnect(); n.det.disconnect(); n.g.disconnect(); } catch (e) {}
+    }
+    musicNodes = [];
+    schedulePhrase(audioCtx.currentTime + 0.02);
+    musicLoopTimer = setTimeout(loopSchedule, phraseMs - 40); // small safety offset
+  }
+
+  musicLoopTimer = setTimeout(loopSchedule, phraseMs - 40);
+}
+    
+    function stopMusic() {
+      if (!audioCtx || !musicPlaying) return;
+      clearInterval(musicLoopTimer);
+      for (const n of musicNodes) {
+        try { n.osc.disconnect(); n.det.disconnect(); n.g.disconnect(); } catch (e) {}
+      }
+      musicNodes = [];
+      musicPlaying = false;
+      // update any music buttons in the UI
+      document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => { if (b) b.textContent = 'Music'; });
+    }
+
+    // wire up music button after DOM exists
+    let musicLoopTimer = null;
+
+    function enableMusic() {
+      initMusic();
+      if (!audioCtx) return;
+      // try to resume (may be blocked until user gesture by browser)
+      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+      startMusic();
+      document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => { if (b) b.textContent = 'Music: ON'; });
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const buttons = Array.from(document.querySelectorAll('#musicBtn, #musicBtnMenu'));
+      if (buttons.length === 0) return;
+
+      // attempt to start music automatically on load
+      enableMusic();
+
+      buttons.forEach(mb => {
+        mb.addEventListener('click', () => {
+          if (!musicPlaying) {
+            enableMusic();
+          } else {
+            stopMusic();
+            document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => { if (b) b.textContent = 'Music'; });
+          }
+        });
+      });
+    });
+
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+
+    let playersConfig = [];
+    let controlsConfig = structuredClone(DEFAULT_CONTROLS);
+    let game = null;
+    let keysDown = new Set();
+    let raf = null;
+    let lastTime = performance.now();
+    let remapTarget = null;
+
+    // Speed ramp: game starts slower and gradually increases to a cap
+    const SPEED_RAMP_DURATION = 120; // seconds until full speed
+    const SPEED_MIN_SCALE = 0.6; // starting multiplier
+    const SPEED_MAX_SCALE = 1.6; // final multiplier
+
+    function getSpeedScale() {
+      if (!game) return SPEED_MIN_SCALE;
+      const t = Math.max(0, Math.min(1, (game.time || 0) / SPEED_RAMP_DURATION));
+      return SPEED_MIN_SCALE + (SPEED_MAX_SCALE - SPEED_MIN_SCALE) * t;
+    }
+
+    function showMenu(){ menuScreen.classList.add("active"); gameScreen.classList.remove("active"); }
+    function showGame(){ menuScreen.classList.remove("active"); gameScreen.classList.add("active"); }
+
+    function buildControlsEditor() {
+      controlsList.innerHTML = "";
+      controlsConfig.forEach((c, i) => {
+        const row = document.createElement("div");
+        row.className = "control-row";
+        row.innerHTML = `
+          <span>Player ${i+1}</span>
+          <input data-player="${i}" data-action="left" value="${c.left}" readonly />
+          <input data-player="${i}" data-action="right" value="${c.right}" readonly />
+          <input data-player="${i}" data-action="special" value="${c.special}" readonly />
+        `;
+        controlsList.appendChild(row);
+      });
+
+      controlsList.querySelectorAll("input").forEach(inp => {
+        inp.addEventListener("click", () => {
+          remapTarget = { player: Number(inp.dataset.player), action: inp.dataset.action, input: inp };
+          inp.value = "Press a key...";
+        });
+      });
+    }
+
+    controlsBtn.addEventListener("click", () => {
+      controlsArea.style.display = controlsArea.style.display === "none" ? "block" : "none";
+      if (controlsArea.style.display === "block") buildControlsEditor();
+    });
+
+    window.addEventListener("keydown", e => {
+      if (remapTarget) {
+        e.preventDefault();
+        controlsConfig[remapTarget.player][remapTarget.action] = e.code;
+        remapTarget.input.value = e.code;
+        remapTarget = null;
+        buildSetup();
+        return;
+      }
+      keysDown.add(e.code);
+      if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+    });
+    window.addEventListener("keyup", e => keysDown.delete(e.code));
+
+    function buildSetup() {
+      const count = Number(playerCountEl.value);
+      setupArea.innerHTML = "";
+      playersConfig = [];
+
+      for (let i = 0; i < count; i++) {
+        const typeOptions = TYPES.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+        const c = controlsConfig[i];
+        const div = document.createElement("div");
+        div.className = "player-box";
+        div.innerHTML = `
+          <h3>Player ${i + 1}</h3>
+          <div class="small">Left: ${c.left} | Right: ${c.right} | Special: ${c.special}</div>
+          <label>Player name
+            <input class="nameInput" data-player="${i}" value="Player ${i + 1}" />
+          </label>
+          <label>Snake type
+            <select data-player="${i}" class="typeSelect">${typeOptions}</select>
+          </label>
+        `;
+        setupArea.appendChild(div);
+      }
+
+      // initialize playersConfig including name
+      playersConfig = Array.from({ length: count }, (_, i) => ({ id: i, type: TYPES[i % TYPES.length].id, name: `Player ${i + 1}` }));
+
+      // wire up type selects
+      document.querySelectorAll(".typeSelect").forEach(sel => {
+        sel.value = TYPES[Number(sel.dataset.player)].id;
+        sel.addEventListener("change", () => {
+          playersConfig[Number(sel.dataset.player)].type = sel.value;
+        });
+      });
+
+      // wire up name inputs
+      document.querySelectorAll(".nameInput").forEach(inp => {
+        const idx = Number(inp.dataset.player);
+        inp.value = playersConfig[idx].name;
+        inp.addEventListener("input", () => {
+          playersConfig[idx].name = inp.value || `Player ${idx + 1}`;
+        });
+      });
+
+      startBtn.disabled = false;
+      buildControlsEditor();
+    }
+
+    setupBtn.addEventListener("click", buildSetup);
+    restartBtn.addEventListener("click", () => {
+      if (raf) cancelAnimationFrame(raf);
+      game = null;
+      showMenu();
+    });
+
+    startBtn.addEventListener("click", () => {
+      initGame();
+      showGame();
+      lastTime = performance.now();
+      loop(lastTime);
+    });
+
+    function makeSnake(playerIndex, typeId) {
+      const type = TYPES.find(t => t.id === typeId);
+      const starts = [
+        { x: WIDTH * 0.25, y: HEIGHT * 0.25, angle: 0 },
+        { x: WIDTH * 0.75, y: HEIGHT * 0.75, angle: Math.PI },
+        { x: WIDTH * 0.25, y: HEIGHT * 0.75, angle: 0 },
+        { x: WIDTH * 0.75, y: HEIGHT * 0.25, angle: Math.PI }
+      ];
+      const s = starts[playerIndex];
+      const body = [];
+      for (let i = 0; i < 26; i++) body.push({ x: s.x - Math.cos(s.angle) * i * 12, y: s.y - Math.sin(s.angle) * i * 12 });
+
+      return {
+        playerIndex,
+        type,
+        color: type.color,
+        // use configured player name (fallback to default label)
+        name: (playersConfig && playersConfig[playerIndex] && playersConfig[playerIndex].name) || `Player ${playerIndex + 1}`,
+        x: s.x,
+        y: s.y,
+        angle: s.angle,
+        turnSpeed: 0.065,
+        speed: 2.0,
+        body,
+        bodySpacing: 12,
+        alive: true,
+        cooldown: 0,
+        flyTimer: 0,
+        speedTimer: 0,
+        projectiles: [],
+        spikes: []
+      };
+    }
+
+    function initGame() {
+      game = {
+        time: 0,
+        over: false,
+        winner: null,
+        snakes: playersConfig.map(p => makeSnake(p.id, p.type))
+      };
+      statusEl.textContent = "Match started.";
+      updateHud();
+    }
+
+    function rechargeRatio(s) { return Math.max(0, Math.min(1, 1 - (s.cooldown / 5))); }
+
+    function updateHud() {
+      if (!game) return;
+      hudEl.innerHTML = game.snakes.map((s, idx) => {
+        const ratio = rechargeRatio(s);
+        const ready = s.cooldown <= 0 ? "Ready" : "Charging";
+        return `
+          <div class="hud-item">
+            <div><strong style="color:${s.color}">${s.name} - ${s.type.name}</strong></div>
+            <div class="small">Special: ${s.type.special}</div>
+            <div class="small">Special status: ${ready}</div>
+            <div class="bar-wrap">
+              <div class="bar ${s.cooldown <= 0 ? "ready" : ""}" style="width:${ratio * 100}%"></div>
+            </div>
+            <div class="small">${s.cooldown > 0 ? `${s.cooldown.toFixed(1)} s until ready` : "Ready"}</div>
+            <div class="small">Flying: ${s.flyTimer > 0 ? s.flyTimer.toFixed(1) : "0.0"} s | Speed: ${s.speedTimer > 0 ? s.speedTimer.toFixed(1) : "0.0"} s</div>
+            <div class="small">Controls: ${controlsConfig[idx].left} / ${controlsConfig[idx].right} + ${controlsConfig[idx].special}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // Play short synthesized SFX for events
+    function playSfx(name) {
+      if (!audioCtx) initMusic();
+      if (!audioCtx || !sfxGain) return;
+      const now = audioCtx.currentTime;
+
+      const makeOsc = (type, freq, dur, vol, detFreq) => {
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        if (detFreq) {
+          const det = audioCtx.createOscillator();
+          det.type = 'sawtooth';
+          det.frequency.value = detFreq;
+          det.connect(g);
+          det.start(now);
+          det.stop(now + dur + 0.02);
+        }
+        osc.connect(g);
+        g.connect(sfxGain);
+        g.gain.setValueAtTime(vol, now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+        osc.start(now);
+        osc.stop(now + dur + 0.02);
+      };
+
+      switch (name) {
+        case 'crash':
+        case 'death':
+          // low thud + short click
+          makeOsc('square', 120, 0.25, 0.18);
+          makeOsc('triangle', 800, 0.08, 0.08);
+          break;
+        case 'impact':
+          makeOsc('sawtooth', 520, 0.12, 0.14);
+          break;
+        case 'special-jumper':
+          makeOsc('sine', 880, 0.18, 0.12);
+          break;
+        case 'special-speedee':
+          makeOsc('square', 600, 0.12, 0.12);
+          break;
+        case 'special-spiker':
+          makeOsc('sawtooth', 420, 0.16, 0.14);
+          break;
+        case 'special-killer':
+          makeOsc('square', 720, 0.14, 0.14, 710);
+          break;
+        case 'special-crook':
+          makeOsc('sawtooth', 520, 0.14, 0.12, 500);
+          break;
+        case 'gameover':
+          makeOsc('sine', 220, 0.5, 0.18);
+          break;
+        default:
+          makeOsc('sine', 600, 0.08, 0.06);
+      }
+    }
+
+    function activateSpecial(snake) {
+      const type = snake.type.id;
+      if (type === "jumper") {
+        snake.flyTimer = 1;
+        statusEl.textContent = `${snake.name} activated flight mode!`;
+        playSfx('special-jumper');
+      } else if (type === "speedee") {
+        snake.speedTimer = 1.0;
+        statusEl.textContent = `${snake.name} got a speed boost!`;
+        playSfx('special-speedee');
+      } else if (type === "spiker") {
+        snake.spikes.push(...spawnStaticSpikes(snake));
+        statusEl.textContent = `${snake.name} created spikes!`;
+        playSfx('special-spiker');
+      } else {
+        snake.projectiles.push({ x: snake.x, y: snake.y, angle: snake.angle, life: 220, t: 0, type });
+        statusEl.textContent = `${snake.name} used ${snake.type.name}!`;
+        // different projectile types get distinct SFX
+        if (type === 'killer') playSfx('special-killer');
+        else if (type === 'crook') playSfx('special-crook');
+      }
+    }
+
+    function pointInBounds(x, y) {
+      return x >= 0 && y >= 0 && x < WIDTH && y < HEIGHT;
+    }
+
+    function spawnStaticSpikes(snake) {
+      const arr = [];
+      const dist = 28;
+      const count = 10;
+      for (let i = 0; i < count; i++) {
+        const a = (Math.PI * 2 * i) / count;
+        arr.push({
+          x: snake.x + Math.cos(a) * dist,
+          y: snake.y + Math.sin(a) * dist,
+          life: 9999,
+          // radius used for collision and projectile hits
+          r: 15,
+          owner: snake.playerIndex
+        });
+      }
+      return arr;
+    }
+
+    function checkTrailCollision(x, y, ignoreSnake = null) {
+      if (!game || !game.snakes) return false;
+      for (const s of game.snakes) {
+        // treat any snake body as an obstacle, even if the snake is dead.
+        if (!s.body || s.body.length === 0) continue;
+        for (let i = 0; i < s.body.length; i++) {
+          if (ignoreSnake === s && i === 0) continue;
+          const p = s.body[i];
+          if (Math.hypot(p.x - x, p.y - y) < 8) return true;
+        }
+
+        // also treat spikes as static obstacles (like body segments)
+        for (const sp of s.spikes || []) {
+          // if the moving snake is flying, allow it to pass over spikes
+          if (ignoreSnake && ignoreSnake.flyTimer > 0) continue;
+          // avoid colliding with your own spikes while moving (consistent with head skip)
+          if (ignoreSnake === s) continue;
+          const r = sp.r || 8;
+          if (Math.hypot(sp.x - x, sp.y - y) < r) return true;
+        }
+      }
+      return false;
+    }
+
+    function carveHoleOnBody(snake, x, y) {
+      for (let i = snake.body.length - 1; i >= 1; i--) {
+      if (Math.hypot(snake.body[i].x - x, snake.body[i].y - y) < 12) {
+        // ensure holes array exists and don't duplicate very close holes
+        if (!snake.holes) snake.holes = [];
+        const hx = snake.body[i].x;
+        const hy = snake.body[i].y;
+        const exists = snake.holes.some(h => Math.hypot(h.x - hx, h.y - hy) < 8);
+        if (!exists) {
+        // persistent dark hole (no timer -> won't fade)
+        snake.holes.push({ x: hx, y: hy });
+        }
+
+        // remove the body segment to create the "hole" in the trail
+        snake.body.splice(i, 1);
+        return; // carve only one hole per projectile hit
+      }
+      }
+    }
+
+    function projectileStep(p, snake) {
+      // Visual markers should stay put (no movement)
+      if (p.visual) {
+      // small pulsing effect via t so crook-style wobble won't apply
+      p.t += 1;
+      return;
+      }
+
+      if (snake.type.id === "crook") {
+      p.t += 1;
+      p.x += Math.cos(p.angle) * 9+ Math.cos(p.t * 0.18) * 3;
+      p.y += Math.sin(p.angle) * 9 + Math.sin(p.t * 0.6 )* 3;
+      return;
+      }
+      p.x += Math.cos(p.angle) * 9;
+      p.y += Math.sin(p.angle) * 9;
+    }
+
+    function handleProjectileHits(snake, p) {
+      for (const other of game.snakes) {
+        // head hit only applies to alive snakes
+        if (other.alive && Math.hypot(other.x - p.x, other.y - p.y) < 14) {
+          if (other !== snake) {
+            other.alive = false;
+            playSfx('death');
+            p.life = 0;
+            return;
+          } else {
+            // hitting own head should not kill the shooter, but still allow carving below
+          }
+        }
+
+        // allow carveHoleOnBody to affect any snake, including the originator
+        if (snake.type.id === "killer" || snake.type.id === "crook") {
+          carveHoleOnBody(other, p.x, p.y);
+        }
+
+        // allow projectiles to hit and remove spikes (including spikes from dead snakes)
+        const spikes = other.spikes || [];
+        for (let i = spikes.length - 1; i >= 0; i--) {
+          const sp = spikes[i];
+          const hitRadius = (sp.r || 8) + 4; // projectile hit tolerance
+          if (Math.hypot(sp.x - p.x, sp.y - p.y) < hitRadius) {
+            // remove all spikes near the impact across all snakes
+            for (const s2 of game.snakes) {
+              if (!s2.spikes) continue;
+              s2.spikes = s2.spikes.filter(spp => Math.hypot(spp.x - p.x, spp.y - p.y) >= hitRadius);
+            }
+
+            // carve a hole through any snake bodies at the impact point
+            for (const s2 of game.snakes) {
+              carveHoleOnBody(s2, p.x, p.y);
+            }
+
+            playSfx('impact');
+            // reduce projectile life so it can pass through multiple obstacles but eventually expire
+            p.life = Math.max(0, p.life - 30);
+            if (p.life <= 0) return;
+            // continue scanning other spikes/snakes
+          }
+        }
+      }
+    }
+
+    // Patch render to draw persistent dark holes after the original render runs.
+    // Function declarations are hoisted so `render` exists by the time this executes.
+    (function () {
+      const _orig = render;
+      render = function () {
+      _orig();
+
+      if (!game) return;
+      // draw persistent holes last so they appear on top
+      ctx.save();
+      for (const s of game.snakes) {
+        if (!s.holes) continue;
+        for (const h of s.holes) {
+        // darker center with subtle outer ring for depth
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(0,0,0,0.95)"; // near-black center
+        ctx.arc(h.x, h.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(0,0,0,0.6)"; // softer outer ring
+        ctx.arc(h.x, h.y, 13, 0, Math.PI * 2);
+        ctx.fill();
+        }
+      }
+      ctx.restore();
+      };
+    })();
+
+    function moveSnake(snake, dt) {
+      if (!snake.alive) return;
+
+      const steer = snake.turnSpeed * dt * 60;
+      const c = controlsConfig[snake.playerIndex];
+      if (keysDown.has(c.left)) snake.angle -= steer;
+      if (keysDown.has(c.right)) snake.angle += steer;
+
+      if (keysDown.has(c.special) && snake.cooldown <= 0) {
+        activateSpecial(snake);
+        // spiker has shorter cooldown
+        snake.cooldown = (snake.type && snake.type.id === "spiker") ? 2.5 : 5;
+      }
+
+      let speed = snake.speed;
+      if (snake.speedTimer > 0) speed *= 1.85;
+
+      let nx = snake.x + Math.cos(snake.angle) * speed * dt * 60;
+      let ny = snake.y + Math.sin(snake.angle) * speed * dt * 60;
+
+      if (snake.flyTimer > 0) {
+        nx = (nx + WIDTH) % WIDTH;
+        ny = (ny + HEIGHT) % HEIGHT;
+      } else if (!pointInBounds(nx, ny)) {
+        snake.alive = false;
+        playSfx('crash');
+        return;
+      }
+
+      snake.x = nx;
+      snake.y = ny;
+
+      snake._distAccum = (snake._distAccum || 0) + speed * dt * 60;
+      if (snake._distAccum >= snake.bodySpacing) {
+        snake._distAccum = 0;
+        snake.body.unshift({ x: snake.x, y: snake.y });
+      }
+
+      while (snake.body.length > 220) snake.body.pop();
+
+      if (snake.flyTimer <= 0 && checkTrailCollision(snake.x, snake.y, snake)) {
+        snake.alive = false;
+        playSfx('crash');
+        return;
+      }
+
+      snake.flyTimer = Math.max(0, snake.flyTimer - dt);
+      snake.speedTimer = Math.max(0, snake.speedTimer - dt);
+      snake.cooldown = Math.max(0, snake.cooldown - dt);
+    }
+
+    function updateProjectiles(snake) {
+      for (const p of snake.projectiles) {
+        p.life -= 1;
+        projectileStep(p, snake);
+        if (!pointInBounds(p.x, p.y)) p.life = 0;
+        if (p.life > 0) handleProjectileHits(snake, p);
+      }
+      snake.projectiles = snake.projectiles.filter(p => p.life > 0);
+    }
+
+    function tick(dt) {
+      if (!game || game.over) return;
+
+      // Increment game time
+      game.time += dt;
+
+      for (const s of game.snakes) {
+        if (!s.alive) continue;
+        moveSnake(s, dt);
+      }
+
+      for (const s of game.snakes) {
+        if (!s.alive) continue;
+        updateProjectiles(s);
+      }
+
+      for (const s of game.snakes) {
+        if (!s.alive || s.type.id !== "spiker") continue;
+        for (const spike of s.spikes) {
+          for (const other of game.snakes) {
+            if (!other.alive || other === s) continue;
+            // allow snakes with active flyTimer to pass over spikes
+            if (other.flyTimer > 0) continue;
+            if (Math.hypot(other.x - spike.x, other.y - spike.y) < 14) {
+              other.alive = false;
+              playSfx('crash');
+            }
+          }
+        }
+      }
+
+      const aliveCount = game.snakes.filter(s => s.alive).length;
+      const lastAlive = game.snakes.find(s => s.alive) || null;
+
+      if (aliveCount <= 1) {
+        game.over = true;
+        game.winner = lastAlive;
+        statusEl.innerHTML = game.winner
+          ? `<span class="winner">${game.winner.name} wins!</span>`
+          : `<span class="winner">No one survived.</span>`;
+        playSfx('gameover');
+      }
+
+      updateHud();
+    }
+
+    function drawTrailSegment(a, b, color, width = 7) {
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!game) return;
+
+      for (const s of game.snakes) {
+        if (!s.alive && s.body.length === 0) continue;
+
+        for (let i = s.body.length - 1; i > 0; i--) {
+          const thickness = Math.max(4, 12 - i * 0.03);
+          drawTrailSegment(s.body[i], s.body[i - 1], s.color, thickness);
+        }
+
+        for (const spike of s.spikes || []) {
+          ctx.fillStyle = "#ffd166";
+          ctx.beginPath();
+          ctx.arc(spike.x, spike.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        for (const p of s.projectiles) {
+          ctx.fillStyle = s.type.id === "crook" ? "#c084fc" : "#ffffff";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = s.color;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (s.flyTimer > 0) {
+          ctx.strokeStyle = "rgba(255,255,255,0.35)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 14, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      if (game.over) {
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    function loop(now) {
+      raf = requestAnimationFrame(loop);
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      tick(dt);
+      render();
+    }
+
+    buildSetup();
+  </script>
+</body>
+</html>
