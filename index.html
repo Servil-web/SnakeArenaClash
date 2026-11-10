@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Snake Clash Arena</title>
+  <!-- PeerJS: WebRTC peer-to-peer for online multiplayer (free public signaling server) -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     :root{
       --bg:#050607; --panel:#0b0f12; --text:#cfdbe6; --muted:#6f7b84;
@@ -88,6 +90,28 @@
     .controls-list{display:grid; gap:8px; margin-top:10px}
     .control-row{display:grid; grid-template-columns:110px 1fr 1fr 1fr; gap:8px; align-items:center}
     .control-row span{font-size:.9rem; color:var(--muted)}
+
+    /* ---- refreshed menu look ---- */
+    body{background:radial-gradient(ellipse at 20% 0%,#1a1033 0%,transparent 55%),radial-gradient(ellipse at 90% 100%,#0b2a33 0%,transparent 50%),#05060a}
+    #menuScreen{background:linear-gradient(160deg,rgba(20,18,40,.92),rgba(8,12,20,.95));border:1px solid rgba(160,120,255,.18)}
+    #menuScreen h1{
+      font-size:3rem; font-weight:900; letter-spacing:1px;
+      background:linear-gradient(90deg,#ff4d4d,#f59e0b,#22c55e,#38bdf8,#8b5cf6);
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+      filter:drop-shadow(0 0 18px rgba(139,92,246,.35));
+    }
+    #menuScreen .card{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(6px)}
+    .player-box{background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border-top:4px solid var(--pc,#888);transition:transform .15s,box-shadow .15s}
+    .player-box:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.4),0 0 20px color-mix(in srgb,var(--pc,#888) 35%,transparent)}
+    .player-box h3{color:var(--pc,#fff)}
+    .btn{transition:transform .1s,filter .15s,box-shadow .15s}
+    .btn:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.15);box-shadow:0 6px 20px rgba(47,129,247,.35)}
+    #startBtn{font-size:1.15rem;padding:14px 36px;background:linear-gradient(90deg,#ff4d4d,#f59e0b);box-shadow:0 0 24px rgba(255,100,60,.35)}
+    .btn.off{opacity:.55}
+    .swatches{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .swatch{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;box-shadow:0 0 0 1px rgba(255,255,255,.15)}
+    .swatch.selected{border-color:#fff;box-shadow:0 0 12px var(--sc)}
+    .swatch.taken{opacity:.25;cursor:not-allowed}
   </style>
 </head>
 <body>
@@ -102,6 +126,7 @@
           <div class="small">Controls: turn left / turn right / special</div>
           <div>
             <button class="btn secondary" id="musicBtnMenu">Music</button>
+            <button class="btn secondary" id="sfxBtnMenu">SFX: ON</button>
           </div>
         </div>
 
@@ -133,6 +158,28 @@
           <button class="btn danger" id="startBtn" disabled>Start game</button>
         </div>
 
+        <div class="card" id="onlineCard" style="margin-top:16px;">
+          <h3>Online multiplayer</h3>
+          <div id="onlineIdle">
+            <button class="btn" id="hostBtn">Host online game</button>
+            <div class="small">Uses your Player 1 name, type, color and controls. Send the invite link to friends.</div>
+            <div class="small" id="onlineMsg"></div>
+          </div>
+          <div id="onlineLobby" style="display:none;">
+            <div id="inviteRow">
+              <div class="small">Invite link:</div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input id="inviteLink" readonly style="margin-top:0" />
+                <button class="btn secondary" id="copyLinkBtn" style="margin:0">Copy</button>
+              </div>
+            </div>
+            <div id="lobbyList" class="controls-list" style="margin:12px 0"></div>
+            <button class="btn" id="readyBtn">Ready</button>
+            <button class="btn secondary" id="leaveBtn">Leave</button>
+            <div class="small" id="onlineStatus"></div>
+          </div>
+        </div>
+
         <div class="card" style="margin-top:16px;">
           <h3>Snake types</h3>
           <div class="legend">
@@ -141,6 +188,8 @@
             <span class="pill">Spiker — Creates spikes</span>
             <span class="pill">Jumper — Fly for 1 s</span>
             <span class="pill">Speedee — Speed boost</span>
+            <span class="pill">KaBoom — Proximity bomb</span>
+            <span class="pill">Boris — Splits into 3 heads</span>
           </div>
         </div>
       </div>
@@ -155,6 +204,7 @@
           </div>
           <div>
             <button class="btn secondary" id="musicBtn">Music</button>
+            <button class="btn secondary" id="sfxBtn">SFX: ON</button>
             <button class="btn secondary" id="restartBtn">Back to menu</button>
           </div>
         </div>
@@ -172,8 +222,28 @@
       { id:"crook", name:"Spiral", color:"#8b5cf6", special:"Spiraling projectile" },
       { id:"spiker", name:"Spiker", color:"#f59e0b", special:"Creates spikes" },
       { id:"jumper", name:"Jumper", color:"#22c55e", special:"Fly for 1 s" },
-      { id:"speedee", name:"Speedee", color:"#f97316", special:"Speed boost" }
+      { id:"speedee", name:"Speedee", color:"#f97316", special:"Speed boost" },
+      { id:"kaboom", name:"KaBoom", special:"Drops a proximity bomb (30 s fuse)" },
+      { id:"boris", name:"Boris", special:"Splits into 3 heads" }
     ];
+
+    // special cooldowns per type (seconds)
+    function getCooldown(typeId) {
+      if (typeId === "spiker") return 2.5;
+      if (typeId === "kaboom") return 10;
+      return 5;
+    }
+    const BOMB_FUSE = 30;
+    const BOMB_TRIGGER_RADIUS = 44; // +30%
+    const BOMB_BLAST_RADIUS = 104; // +30%
+
+    // Snake colors are independent of the snake type
+    const COLORS = ["#ff4d4d", "#f59e0b", "#facc15", "#22c55e", "#14b8a6", "#38bdf8", "#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#e5e7eb"];
+    let sfxEnabled = true;
+
+    // online multiplayer state (mode: null | 'host' | 'guest')
+    let net = { mode: null, peer: null, conn: null, lobby: [], you: 0, started: false, remoteInputs: {}, sfxQueue: [], frame: 0, sentOver: false, lastInput: "" };
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
     const DEFAULT_CONTROLS = [
       { left:"KeyA", right:"KeyD", special:"Space", label:"Player 1: A / D + Space" },
@@ -220,62 +290,127 @@
       }
     }
 
-function startMusic() {
-  if (!audioCtx) initMusic();
-  if (!audioCtx || musicPlaying) return;
+    // ---- shared synth helpers (music + SFX) ----
+    function getNoiseBuffer() {
+      if (getNoiseBuffer.buf) return getNoiseBuffer.buf;
+      const len = audioCtx.sampleRate;
+      const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      return (getNoiseBuffer.buf = buf);
+    }
 
-  const now = audioCtx.currentTime;
-  const pattern = [23,21,23,18,16,18,11,23,21,23,18,16,18,11,23,25,26,25,26,23,25,23,25,21,23,21,23,19,23,23,33,35,30,28,30,23,35,33,35,30,28,30,23,35,37,38,37,38,35,37,35,37,33,35,33,35,31,35];
-  const baseFreq = 220;
-  const noteDur = 0.2;
-  const dur = 0.22;
-
-  // helper to schedule one phrase
-  function schedulePhrase(startTime) {
-    for (let i = 0; i < pattern.length; i++) {
-      const t = startTime + i * noteDur;
+    function synthTone(dest, type, freq, t, dur, vol, freqEnd) {
       const osc = audioCtx.createOscillator();
-      const det = audioCtx.createOscillator();
       const g = audioCtx.createGain();
-      osc.type = 'square';
-      det.type = 'sawtooth';
-      osc.frequency.value = baseFreq * Math.pow(2, pattern[i] / 12);
-      det.frequency.value = osc.frequency.value * 0.99;
-      g.gain.value = 0.0001;
-      osc.connect(g); det.connect(g); g.connect(musicGain);
-      osc.start(t); det.start(t);
-      g.gain.setValueAtTime(0.12, t + 0.005);
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t);
+      if (freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.008);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      osc.stop(t + dur + 0.05); det.stop(t + dur + 0.05);
-      musicNodes.push({ osc, det, g });
+      osc.connect(g); g.connect(dest);
+      osc.start(t); osc.stop(t + dur + 0.05);
+      return osc;
     }
-  }
 
-  // schedule first phrase
-  schedulePhrase(now);
-  musicPlaying = true;
-
-  const phraseMs = Math.round(pattern.length * noteDur * 1000);
-
-  // schedule repeating phrases (avoid drift by using setTimeout loop)
-  function loopSchedule() {
-    // disconnect previous finished nodes
-    for (const n of musicNodes) {
-      try { n.osc.disconnect(); n.det.disconnect(); n.g.disconnect(); } catch (e) {}
+    function synthNoise(dest, t, dur, vol, filterType, freq) {
+      const src = audioCtx.createBufferSource();
+      src.buffer = getNoiseBuffer();
+      const f = audioCtx.createBiquadFilter();
+      f.type = filterType; f.frequency.value = freq;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f); f.connect(g); g.connect(dest);
+      src.start(t); src.stop(t + dur + 0.05);
+      return src;
     }
-    musicNodes = [];
-    schedulePhrase(audioCtx.currentTime + 0.02);
-    musicLoopTimer = setTimeout(loopSchedule, phraseMs - 40); // small safety offset
-  }
 
-  musicLoopTimer = setTimeout(loopSchedule, phraseMs - 40);
-}
+    // Lookahead music sequencer: lead + detuned layer, bass, kick, snare, hi-hat
+    function startMusic() {
+      if (!audioCtx) initMusic();
+      if (!audioCtx || musicPlaying) return;
+      musicPlaying = true;
+
+      const lead = [23,21,23,18,16,18,11,23,21,23,18,16,18,11,23,25,26,25,26,23,25,23,25,21,23,21,23,19,23,23,33,35,30,28,30,23,35,33,35,30,28,30,23,35,37,38,37,38,35,37,35,37,33,35,33,35,31,35];
+      const bass = [11, 11, 6, 6, 4, 4, 9, 9];
+      const step = 0.16;
+      let idx = 0;
+      let nextTime = audioCtx.currentTime + 0.08;
+
+      const track = n => {
+        musicNodes.push(n);
+        n.onended = () => { const k = musicNodes.indexOf(n); if (k >= 0) musicNodes.splice(k, 1); };
+      };
+
+      // ---- song arrangement: sections with different melody / bass / drums ----
+      const leadB = [30,null,28,26,28,null,23,null,26,25,23,21,23,null,null,18,
+                     21,23,25,26,28,26,25,23,25,null,21,null,18,null,null,null];
+      const SECTIONS = [
+        { name:'A',  len:64, lead:i => lead[i % lead.length], tr:0, bass:[11,11,6,6,4,4,9,9], arp:[0,4,7,12], drums:'full' },
+        { name:'A2', len:64, lead:i => lead[i % lead.length], tr:5, bass:[4,4,11,11,9,9,2,2], arp:[0,3,7,12], drums:'full' },
+        { name:'B',  len:64, lead:i => leadB[i % leadB.length], tr:0, bass:[4,4,9,9,11,11,6,6], arp:[0,7,12,7], drums:'half' },
+        { name:'A',  len:64, lead:i => lead[i % lead.length] + (i % 16 === 15 ? 12 : 0), tr:0, bass:[11,11,6,6,4,4,9,9], arp:[0,4,7,12], drums:'full' },
+        { name:'C',  len:32, lead:() => null, tr:0, bass:[9,9,6,6], arp:[0,5,9,12], drums:'break' }
+      ];
+      const SONG_LEN = SECTIONS.reduce((a, s) => a + s.len, 0);
+      function sectionAt(n) {
+        let i = n % SONG_LEN;
+        for (const s of SECTIONS) { if (i < s.len) return { s, i }; i -= s.len; }
+      }
+
+      function scheduler() {
+        if (!musicPlaying) return;
+        while (nextTime < audioCtx.currentTime + 0.3) {
+          const { s: sec, i } = sectionAt(idx);
+          const fill = i >= sec.len - 4; // drum fill at end of every section
+
+          // pulse 1: lead (null = rest)
+          const note = sec.lead(i);
+          if (note != null) {
+            const f = 220 * Math.pow(2, (note + sec.tr) / 12);
+            track(synthTone(musicGain, 'square', f, nextTime, step * 0.6, 0.1));
+          }
+          // pulse 2: fast arpeggio
+          const root = sec.bass[Math.floor(i / 8) % sec.bass.length] + sec.tr;
+          for (let k = 0; k < 3; k++) {
+            const af = 440 * Math.pow(2, (root + sec.arp[(i + k) % 4]) / 12);
+            track(synthTone(musicGain, 'square', af, nextTime + k * step / 3, step / 3 * 0.9, sec.drums === 'break' ? 0.05 : 0.035));
+          }
+          // triangle bass: octave bounce (held notes in breakdown)
+          const bf = 55 * Math.pow(2, root / 12) * (sec.drums !== 'break' && i % 2 ? 2 : 1);
+          if (sec.drums !== 'break' || i % 4 === 0) track(synthTone(musicGain, 'triangle', bf, nextTime, step * (sec.drums === 'break' ? 3.5 : 0.9), 0.45));
+
+          // noise drums
+          const beat = i % 4;
+          if (fill) {
+            track(synthNoise(musicGain, nextTime, 0.06, 0.25, 'bandpass', 1500 + (i % 4) * 600));
+            track(synthNoise(musicGain, nextTime + step / 2, 0.05, 0.2, 'bandpass', 1800 + (i % 4) * 600));
+          } else if (sec.drums === 'full') {
+            if (beat === 0) track(synthNoise(musicGain, nextTime, 0.08, 0.35, 'lowpass', 400));
+            if (beat === 2) track(synthNoise(musicGain, nextTime, 0.1, 0.22, 'bandpass', 2500));
+            if (i % 2) track(synthNoise(musicGain, nextTime, 0.02, 0.06, 'highpass', 8000));
+          } else if (sec.drums === 'half') {
+            if (i % 8 === 0) track(synthNoise(musicGain, nextTime, 0.08, 0.35, 'lowpass', 400));
+            if (i % 8 === 4) track(synthNoise(musicGain, nextTime, 0.12, 0.22, 'bandpass', 2500));
+            track(synthNoise(musicGain, nextTime, 0.02, 0.05, 'highpass', 8000));
+          } else if (sec.drums === 'break') {
+            if (i % 8 === 0) track(synthNoise(musicGain, nextTime, 0.08, 0.3, 'lowpass', 400));
+          }
+          nextTime += step;
+          idx++;
+        }
+        musicLoopTimer = setTimeout(scheduler, 60);
+      }
+      scheduler();
+    }
     
     function stopMusic() {
       if (!audioCtx || !musicPlaying) return;
-      clearInterval(musicLoopTimer);
+      clearTimeout(musicLoopTimer);
       for (const n of musicNodes) {
-        try { n.osc.disconnect(); n.det.disconnect(); n.g.disconnect(); } catch (e) {}
+        try { n.stop(); } catch (e) {}
       }
       musicNodes = [];
       musicPlaying = false;
@@ -312,13 +447,98 @@ function startMusic() {
           }
         });
       });
+
+      // SFX on/off toggle (menu + in-game)
+      const sfxButtons = document.querySelectorAll('#sfxBtn, #sfxBtnMenu');
+      const refreshSfx = () => sfxButtons.forEach(b => {
+        b.textContent = sfxEnabled ? 'SFX: ON' : 'SFX: OFF';
+        b.classList.toggle('off', !sfxEnabled);
+      });
+      refreshSfx();
+      sfxButtons.forEach(b => b.addEventListener('click', () => {
+        sfxEnabled = !sfxEnabled;
+        refreshSfx();
+        saveSettings();
+        if (sfxEnabled) playSfx('ui');
+      }));
     });
 
     const WIDTH = canvas.width;
     const HEIGHT = canvas.height;
 
+    // ---- underground tunnels: offscreen layer that accumulates dug paths ----
+    const tunnelCanvas = document.createElement("canvas");
+    tunnelCanvas.width = WIDTH;
+    tunnelCanvas.height = HEIGHT;
+    const tctx = tunnelCanvas.getContext("2d");
+
+    function clearTunnels() {
+      tctx.clearRect(0, 0, WIDTH, HEIGHT);
+    }
+
+    function digTunnel(x1, y1, x2, y2) {
+      // skip wrap-around jumps
+      if (Math.hypot(x2 - x1, y2 - y1) > 60) return;
+      tctx.lineCap = "round";
+      tctx.lineJoin = "round";
+
+      // earthy rim drawn only BEHIND existing pixels so it never covers older black tunnel
+      tctx.globalCompositeOperation = "destination-over";
+      tctx.strokeStyle = "rgba(70,45,25,0.9)";
+      tctx.lineWidth = 34;
+      tctx.beginPath(); tctx.moveTo(x1, y1); tctx.lineTo(x2, y2); tctx.stroke();
+      tctx.strokeStyle = "rgba(40,25,15,0.35)";
+      tctx.lineWidth = 44;
+      tctx.beginPath(); tctx.moveTo(x1, y1); tctx.lineTo(x2, y2); tctx.stroke();
+
+      // black hollow core
+      tctx.globalCompositeOperation = "source-over";
+      tctx.strokeStyle = "#020202";
+      tctx.lineWidth = 24;
+      tctx.beginPath(); tctx.moveTo(x1, y1); tctx.lineTo(x2, y2); tctx.stroke();
+
+      // occasional dirt crumbs along the edge
+      if (Math.random() < 0.35) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 16 + Math.random() * 8;
+        tctx.fillStyle = `rgba(${90 + Math.random() * 40},${60 + Math.random() * 30},${30 + Math.random() * 20},0.8)`;
+        tctx.beginPath();
+        tctx.arc(x2 + Math.cos(a) * r, y2 + Math.sin(a) * r, 1 + Math.random() * 2, 0, Math.PI * 2);
+        tctx.fill();
+      }
+    }
+
     let playersConfig = [];
     let controlsConfig = structuredClone(DEFAULT_CONTROLS);
+
+    // ---- persistent settings (names, types, controls) ----
+    const SETTINGS_KEY = "snakeClashSettings";
+    let savedPlayers = [];
+    function loadSettings() {
+      try {
+        const data = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+        if (!data) return;
+        if (Array.isArray(data.controls)) {
+          data.controls.forEach((c, i) => { if (controlsConfig[i]) Object.assign(controlsConfig[i], c); });
+        }
+        if (Array.isArray(data.players)) savedPlayers = data.players;
+        if (data.playerCount) playerCountEl.value = String(data.playerCount);
+        if (typeof data.sfxEnabled === 'boolean') sfxEnabled = data.sfxEnabled;
+      } catch (e) {}
+    }
+    function saveSettings() {
+      try {
+        // during an online match playersConfig holds the lobby players, don't save those
+        if (!net.started) playersConfig.forEach((p, i) => { savedPlayers[i] = { name: p.name, type: p.type, color: p.color }; });
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+          controls: controlsConfig.map(c => ({ left: c.left, right: c.right, special: c.special })),
+          players: savedPlayers,
+          playerCount: Number(playerCountEl.value),
+          sfxEnabled
+        }));
+      } catch (e) {}
+    }
+    loadSettings();
     let game = null;
     let keysDown = new Set();
     let raf = null;
@@ -373,12 +593,17 @@ function startMusic() {
         remapTarget.input.value = e.code;
         remapTarget = null;
         buildSetup();
+        saveSettings();
         return;
       }
       keysDown.add(e.code);
       if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+      if (net.mode === 'guest' && net.started) sendInput();
     });
-    window.addEventListener("keyup", e => keysDown.delete(e.code));
+    window.addEventListener("keyup", e => {
+      keysDown.delete(e.code);
+      if (net.mode === 'guest' && net.started) sendInput();
+    });
 
     function buildSetup() {
       const count = Number(playerCountEl.value);
@@ -399,18 +624,55 @@ function startMusic() {
           <label>Snake type
             <select data-player="${i}" class="typeSelect">${typeOptions}</select>
           </label>
+          <div class="small" style="margin-top:10px">Snake color</div>
+          <div class="swatches" data-player="${i}"></div>
         `;
         setupArea.appendChild(div);
       }
 
-      // initialize playersConfig including name
-      playersConfig = Array.from({ length: count }, (_, i) => ({ id: i, type: TYPES[i % TYPES.length].id, name: `Player ${i + 1}` }));
+      // initialize playersConfig from saved settings (fallback to defaults)
+      const used = new Set();
+      playersConfig = Array.from({ length: count }, (_, i) => {
+        const sp = savedPlayers[i] || {};
+        const validType = TYPES.some(t => t.id === sp.type) ? sp.type : TYPES[i % TYPES.length].id;
+        let color = COLORS.includes(sp.color) && !used.has(sp.color) ? sp.color : null;
+        if (!color) color = COLORS.find(c => !used.has(c));
+        used.add(color);
+        return { id: i, type: validType, name: sp.name || `Player ${i + 1}`, color };
+      });
+
+      // color swatches (each color can be used by only one player)
+      const refreshSwatches = () => {
+        document.querySelectorAll(".swatches").forEach(box => {
+          const idx = Number(box.dataset.player);
+          box.closest(".player-box").style.setProperty("--pc", playersConfig[idx].color);
+          box.innerHTML = "";
+          COLORS.forEach(col => {
+            const sw = document.createElement("div");
+            const takenBy = playersConfig.findIndex(p => p.color === col);
+            sw.className = "swatch" + (takenBy === idx ? " selected" : takenBy >= 0 ? " taken" : "");
+            sw.style.background = col;
+            sw.style.setProperty("--sc", col);
+            sw.title = takenBy >= 0 && takenBy !== idx ? `Used by ${playersConfig[takenBy].name}` : col;
+            sw.addEventListener("click", () => {
+              if (takenBy >= 0 && takenBy !== idx) return;
+              playersConfig[idx].color = col;
+              refreshSwatches();
+              saveSettings();
+            });
+            box.appendChild(sw);
+          });
+        });
+      };
+      refreshSwatches();
 
       // wire up type selects
       document.querySelectorAll(".typeSelect").forEach(sel => {
-        sel.value = TYPES[Number(sel.dataset.player)].id;
+        const idx = Number(sel.dataset.player);
+        sel.value = playersConfig[idx].type;
         sel.addEventListener("change", () => {
-          playersConfig[Number(sel.dataset.player)].type = sel.value;
+          playersConfig[idx].type = sel.value;
+          saveSettings();
         });
       });
 
@@ -420,6 +682,7 @@ function startMusic() {
         inp.value = playersConfig[idx].name;
         inp.addEventListener("input", () => {
           playersConfig[idx].name = inp.value || `Player ${idx + 1}`;
+          saveSettings();
         });
       });
 
@@ -430,11 +693,26 @@ function startMusic() {
     setupBtn.addEventListener("click", buildSetup);
     restartBtn.addEventListener("click", () => {
       if (raf) cancelAnimationFrame(raf);
+      const wasOnline = net.started;
+      net.started = false;
       game = null;
+      if (wasOnline) {
+        buildSetup(); // restore local player settings
+        if (net.mode === 'host') {
+          net.lobby = net.lobby.filter(p => !p.gone);
+          net.lobby.forEach(p => { p.ready = false; if (p.conn) p.conn.send({ t: 'menu' }); });
+          broadcastLobby();
+        }
+      }
+      saveSettings();
       showMenu();
     });
 
+    playerCountEl.addEventListener("change", () => { buildSetup(); saveSettings(); });
+
     startBtn.addEventListener("click", () => {
+      saveSettings();
+      if (raf) cancelAnimationFrame(raf);
       initGame();
       showGame();
       lastTime = performance.now();
@@ -456,7 +734,7 @@ function startMusic() {
       return {
         playerIndex,
         type,
-        color: type.color,
+        color: (playersConfig[playerIndex] && playersConfig[playerIndex].color) || COLORS[playerIndex % COLORS.length],
         // use configured player name (fallback to default label)
         name: (playersConfig && playersConfig[playerIndex] && playersConfig[playerIndex].name) || `Player ${playerIndex + 1}`,
         x: s.x,
@@ -476,26 +754,35 @@ function startMusic() {
     }
 
     function initGame() {
+      clearTunnels();
       game = {
         time: 0,
         over: false,
         winner: null,
+        particles: [],
+        shake: 0,
+        bombs: [],
+        blasts: [],
         snakes: playersConfig.map(p => makeSnake(p.id, p.type))
       };
       statusEl.textContent = "Match started.";
       updateHud();
     }
 
-    function rechargeRatio(s) { return Math.max(0, Math.min(1, 1 - (s.cooldown / 5))); }
+    function rechargeRatio(s) { return Math.max(0, Math.min(1, 1 - (s.cooldown / (s.maxCooldown || 5)))); }
 
     function updateHud() {
       if (!game) return;
-      hudEl.innerHTML = game.snakes.map((s, idx) => {
+      // one HUD card per player (Boris clones are grouped with their main head)
+      hudEl.innerHTML = game.snakes.filter(m => !m.isClone).map(m => {
+        const idx = m.playerIndex;
+        const aliveHeads = game.snakes.filter(h => h.playerIndex === idx && h.alive);
+        const s = aliveHeads[0] || m;
         const ratio = rechargeRatio(s);
-        const ready = s.cooldown <= 0 ? "Ready" : "Charging";
+        const ready = aliveHeads.length > 1 ? `Locked (${aliveHeads.length} heads)` : s.cooldown <= 0 ? "Ready" : "Charging";
         return `
           <div class="hud-item">
-            <div><strong style="color:${s.color}">${s.name} - ${s.type.name}</strong></div>
+            <div><strong style="color:${s.color}">${esc(s.name)} - ${s.type.name}</strong></div>
             <div class="small">Special: ${s.type.special}</div>
             <div class="small">Special status: ${ready}</div>
             <div class="bar-wrap">
@@ -511,61 +798,61 @@ function startMusic() {
 
     // Play short synthesized SFX for events
     function playSfx(name) {
+      if (net.mode === 'host' && net.started) net.sfxQueue.push(name); // forward to guests
+      if (!sfxEnabled) return;
       if (!audioCtx) initMusic();
       if (!audioCtx || !sfxGain) return;
-      const now = audioCtx.currentTime;
-
-      const makeOsc = (type, freq, dur, vol, detFreq) => {
-        const osc = audioCtx.createOscillator();
-        const g = audioCtx.createGain();
-        osc.type = type;
-        osc.frequency.value = freq;
-        if (detFreq) {
-          const det = audioCtx.createOscillator();
-          det.type = 'sawtooth';
-          det.frequency.value = detFreq;
-          det.connect(g);
-          det.start(now);
-          det.stop(now + dur + 0.02);
-        }
-        osc.connect(g);
-        g.connect(sfxGain);
-        g.gain.setValueAtTime(vol, now);
-        g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-        osc.start(now);
-        osc.stop(now + dur + 0.02);
-      };
+      const t = audioCtx.currentTime;
+      const out = sfxGain;
 
       switch (name) {
         case 'crash':
         case 'death':
-          // low thud + short click
-          makeOsc('square', 120, 0.25, 0.18);
-          makeOsc('triangle', 800, 0.08, 0.08);
+          // explosion: filtered noise burst + falling tones
+          synthNoise(out, t, 0.6, 0.5, 'lowpass', 900);
+          synthTone(out, 'square', 180, t, 0.45, 0.25, 30);
+          synthTone(out, 'sawtooth', 90, t, 0.55, 0.15, 25);
           break;
         case 'impact':
-          makeOsc('sawtooth', 520, 0.12, 0.14);
+          synthNoise(out, t, 0.18, 0.35, 'bandpass', 1800);
+          synthTone(out, 'square', 600, t, 0.12, 0.12, 150);
           break;
         case 'special-jumper':
-          makeOsc('sine', 880, 0.18, 0.12);
+          synthTone(out, 'sine', 300, t, 0.35, 0.2, 1200);
+          synthTone(out, 'triangle', 600, t + 0.05, 0.3, 0.1, 2000);
           break;
         case 'special-speedee':
-          makeOsc('square', 600, 0.12, 0.12);
+          synthTone(out, 'sawtooth', 200, t, 0.3, 0.15, 900);
+          synthNoise(out, t, 0.3, 0.15, 'highpass', 3000);
           break;
         case 'special-spiker':
-          makeOsc('sawtooth', 420, 0.16, 0.14);
+          for (let k = 0; k < 4; k++) synthTone(out, 'square', 800 - k * 120, t + k * 0.04, 0.08, 0.12);
           break;
         case 'special-killer':
-          makeOsc('square', 720, 0.14, 0.14, 710);
+          synthTone(out, 'square', 900, t, 0.2, 0.18, 120);
+          synthNoise(out, t, 0.15, 0.2, 'bandpass', 2500);
           break;
         case 'special-crook':
-          makeOsc('sawtooth', 520, 0.14, 0.12, 500);
+          synthTone(out, 'sawtooth', 400, t, 0.3, 0.14, 1400);
+          synthTone(out, 'sine', 1400, t + 0.05, 0.25, 0.08, 400);
+          break;
+        case 'bomb-drop':
+          synthTone(out, 'square', 220, t, 0.1, 0.15, 110);
+          synthTone(out, 'sine', 880, t + 0.08, 0.06, 0.08);
+          break;
+        case 'explosion':
+          synthNoise(out, t, 1.0, 0.8, 'lowpass', 600);
+          synthTone(out, 'sine', 120, t, 0.8, 0.5, 20);
+          synthTone(out, 'square', 70, t, 0.6, 0.2, 20);
+          break;
+        case 'special-boris':
+          [0, 7, 12].forEach((n, k) => synthTone(out, 'square', 440 * Math.pow(2, n / 12), t + k * 0.05, 0.15, 0.12));
           break;
         case 'gameover':
-          makeOsc('sine', 220, 0.5, 0.18);
+          [0, 4, 7, 12].forEach((n, k) => synthTone(out, 'square', 330 * Math.pow(2, n / 12), t + k * 0.14, 0.35, 0.15));
           break;
         default:
-          makeOsc('sine', 600, 0.08, 0.06);
+          synthTone(out, 'sine', 600, t, 0.08, 0.08);
       }
     }
 
@@ -583,6 +870,14 @@ function startMusic() {
         snake.spikes.push(...spawnStaticSpikes(snake));
         statusEl.textContent = `${snake.name} created spikes!`;
         playSfx('special-spiker');
+      } else if (type === "kaboom") {
+        game.bombs.push({ x: snake.x, y: snake.y, timer: BOMB_FUSE, owner: snake.playerIndex, color: snake.color });
+        statusEl.textContent = `${snake.name} dropped a bomb!`;
+        playSfx('bomb-drop');
+      } else if (type === "boris") {
+        spawnBorisHeads(snake);
+        statusEl.textContent = `${snake.name} split into 3 heads!`;
+        playSfx('special-boris');
       } else {
         snake.projectiles.push({ x: snake.x, y: snake.y, angle: snake.angle, life: 220, t: 0, type });
         statusEl.textContent = `${snake.name} used ${snake.type.name}!`;
@@ -590,6 +885,58 @@ function startMusic() {
         if (type === 'killer') playSfx('special-killer');
         else if (type === 'crook') playSfx('special-crook');
       }
+    }
+
+    // Boris: add two extra heads at +30° and -30° from the current head
+    function spawnBorisHeads(snake) {
+      for (const off of [Math.PI / 6, -Math.PI / 6]) {
+        const a = snake.angle + off;
+        const x = snake.x + Math.cos(a) * 24;
+        const y = snake.y + Math.sin(a) * 24;
+        game.snakes.push({
+          ...snake,
+          isClone: true,
+          x, y, angle: a,
+          body: [{ x, y }],
+          projectiles: [], spikes: [], holes: [],
+          _distAccum: 0, _wasAlive: true,
+          flyTimer: 0, speedTimer: 0
+        });
+        spawnParticles(x, y, snake.color, 20, 3, 30);
+      }
+    }
+
+    // KaBoom: bomb explosion kills other heads in range, carves bodies, removes spikes
+    function explodeBomb(b) {
+      b.exploded = true;
+      const R = BOMB_BLAST_RADIUS;
+      for (const s of game.snakes) {
+        if (s.alive && s.playerIndex !== b.owner && Math.hypot(s.x - b.x, s.y - b.y) < R) s.alive = false;
+        s.holes = s.holes || [];
+        for (let i = s.body.length - 1; i >= 1; i--) {
+          const p = s.body[i];
+          if (Math.hypot(p.x - b.x, p.y - b.y) < R) {
+            s.holes.push({ x: p.x, y: p.y });
+            s.body.splice(i, 1);
+          }
+        }
+        if (s.spikes) s.spikes = s.spikes.filter(sp => Math.hypot(sp.x - b.x, sp.y - b.y) >= R);
+      }
+      spawnParticles(b.x, b.y, "#ff7a18", 90, 9, 60);
+      spawnParticles(b.x, b.y, "#ffd166", 40, 5, 40);
+      game.blasts.push({ x: b.x, y: b.y, t: 0 });
+      game.shake = 22;
+      playSfx('explosion');
+    }
+
+    function updateBombs(dt) {
+      for (const b of game.bombs) {
+        b.timer -= dt;
+        const triggered = game.snakes.some(s => s.alive && s.playerIndex !== b.owner &&
+          Math.hypot(s.x - b.x, s.y - b.y) < BOMB_TRIGGER_RADIUS);
+        if (triggered || b.timer <= 0) explodeBomb(b);
+      }
+      game.bombs = game.bombs.filter(b => !b.exploded);
     }
 
     function pointInBounds(x, y) {
@@ -630,7 +977,7 @@ function startMusic() {
           // if the moving snake is flying, allow it to pass over spikes
           if (ignoreSnake && ignoreSnake.flyTimer > 0) continue;
           // avoid colliding with your own spikes while moving (consistent with head skip)
-          if (ignoreSnake === s) continue;
+          if (ignoreSnake && ignoreSnake.playerIndex === s.playerIndex) continue;
           const r = sp.r || 8;
           if (Math.hypot(sp.x - x, sp.y - y) < r) return true;
         }
@@ -653,6 +1000,7 @@ function startMusic() {
 
         // remove the body segment to create the "hole" in the trail
         snake.body.splice(i, 1);
+        spawnParticles(hx, hy, snake.color, 14, 3, 28);
         return; // carve only one hole per projectile hit
       }
       }
@@ -680,7 +1028,7 @@ function startMusic() {
       for (const other of game.snakes) {
         // head hit only applies to alive snakes
         if (other.alive && Math.hypot(other.x - p.x, other.y - p.y) < 14) {
-          if (other !== snake) {
+          if (other.playerIndex !== snake.playerIndex) {
             other.alive = false;
             playSfx('death');
             p.life = 0;
@@ -722,47 +1070,49 @@ function startMusic() {
       }
     }
 
-    // Patch render to draw persistent dark holes after the original render runs.
-    // Function declarations are hoisted so `render` exists by the time this executes.
-    (function () {
-      const _orig = render;
-      render = function () {
-      _orig();
-
+    // ---- particles / screen shake ----
+    function spawnParticles(x, y, color, count, speed = 4, life = 40) {
       if (!game) return;
-      // draw persistent holes last so they appear on top
-      ctx.save();
-      for (const s of game.snakes) {
-        if (!s.holes) continue;
-        for (const h of s.holes) {
-        // darker center with subtle outer ring for depth
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(0,0,0,0.95)"; // near-black center
-        ctx.arc(h.x, h.y, 9, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(0,0,0,0.6)"; // softer outer ring
-        ctx.arc(h.x, h.y, 13, 0, Math.PI * 2);
-        ctx.fill();
-        }
+      game.particles = game.particles || [];
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const v = Math.random() * speed;
+        const l = life * (0.5 + Math.random() * 0.5);
+        game.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: l, max: l, color, size: 2 + Math.random() * 3 });
       }
-      ctx.restore();
-      };
-    })();
+    }
+
+    function updateParticles() {
+      if (!game) return;
+      for (const p of game.particles || []) {
+        p.x += p.vx; p.y += p.vy;
+        p.vx *= 0.95; p.vy *= 0.95;
+        p.life -= 1;
+      }
+      game.particles = (game.particles || []).filter(p => p.life > 0);
+      for (const bl of game.blasts || []) bl.t += 1;
+      game.blasts = (game.blasts || []).filter(bl => bl.t < 25);
+      if (game.shake > 0) { game.shake *= 0.9; if (game.shake < 0.3) game.shake = 0; }
+    }
 
     function moveSnake(snake, dt) {
       if (!snake.alive) return;
 
       const steer = snake.turnSpeed * dt * 60;
       const c = controlsConfig[snake.playerIndex];
-      if (keysDown.has(c.left)) snake.angle -= steer;
-      if (keysDown.has(c.right)) snake.angle += steer;
+      if (isDown(snake.playerIndex, "left")) snake.angle -= steer;
+      if (isDown(snake.playerIndex, "right")) snake.angle += steer;
 
-      if (keysDown.has(c.special) && snake.cooldown <= 0) {
-        activateSpecial(snake);
-        // spiker has shorter cooldown
-        snake.cooldown = (snake.type && snake.type.id === "spiker") ? 2.5 : 5;
+      if (isDown(snake.playerIndex, "special") && snake.cooldown <= 0) {
+        // special only usable while the player has exactly one head alive
+        const heads = game.snakes.filter(h => h.alive && h.playerIndex === snake.playerIndex);
+        if (heads.length === 1) {
+          activateSpecial(snake);
+          const cd = getCooldown(snake.type.id);
+          for (const h of game.snakes) {
+            if (h.playerIndex === snake.playerIndex) { h.cooldown = cd; h.maxCooldown = cd; }
+          }
+        }
       }
 
       let speed = snake.speed;
@@ -780,6 +1130,9 @@ function startMusic() {
         return;
       }
 
+      // dig the tunnel underground (flying snakes are above ground, so they don't dig)
+      if (snake.flyTimer <= 0) digTunnel(snake.x, snake.y, nx, ny);
+
       snake.x = nx;
       snake.y = ny;
 
@@ -789,7 +1142,7 @@ function startMusic() {
         snake.body.unshift({ x: snake.x, y: snake.y });
       }
 
-      while (snake.body.length > 220) snake.body.pop();
+      while (snake.body.length > 180) snake.body.pop();
 
       if (snake.flyTimer <= 0 && checkTrailCollision(snake.x, snake.y, snake)) {
         snake.alive = false;
@@ -805,6 +1158,9 @@ function startMusic() {
     function updateProjectiles(snake) {
       for (const p of snake.projectiles) {
         p.life -= 1;
+        p.trail = p.trail || [];
+        p.trail.push({ x: p.x, y: p.y });
+        if (p.trail.length > 10) p.trail.shift();
         projectileStep(p, snake);
         if (!pointInBounds(p.x, p.y)) p.life = 0;
         if (p.life > 0) handleProjectileHits(snake, p);
@@ -819,7 +1175,17 @@ function startMusic() {
       game.time += dt;
 
       for (const s of game.snakes) {
-        if (!s.alive) continue;
+        if (!s.alive) {
+          // dead bodies shrink from the tail at the same rate living snakes grow
+          if (s.body.length > 0) {
+            s._decayAccum = (s._decayAccum || 0) + s.speed * dt * 60;
+            while (s._decayAccum >= s.bodySpacing && s.body.length > 0) {
+              s._decayAccum -= s.bodySpacing;
+              s.body.pop();
+            }
+          }
+          continue;
+        }
         moveSnake(s, dt);
       }
 
@@ -832,7 +1198,7 @@ function startMusic() {
         if (!s.alive || s.type.id !== "spiker") continue;
         for (const spike of s.spikes) {
           for (const other of game.snakes) {
-            if (!other.alive || other === s) continue;
+            if (!other.alive || other.playerIndex === s.playerIndex) continue;
             // allow snakes with active flyTimer to pass over spikes
             if (other.flyTimer > 0) continue;
             if (Math.hypot(other.x - spike.x, other.y - spike.y) < 14) {
@@ -843,14 +1209,28 @@ function startMusic() {
         }
       }
 
-      const aliveCount = game.snakes.filter(s => s.alive).length;
+      updateBombs(dt);
+
+      // death explosions + screen shake
+      for (const s of game.snakes) {
+        if (s._wasAlive !== false && !s.alive) {
+          spawnParticles(s.x, s.y, s.color, 60, 6, 60);
+          spawnParticles(s.x, s.y, "#ffffff", 20, 3, 30);
+          game.shake = 14;
+        }
+        s._wasAlive = s.alive;
+      }
+
+      // a player stays in the game while at least one of their heads is alive
+      const aliveCount = new Set(game.snakes.filter(s => s.alive).map(s => s.playerIndex)).size;
       const lastAlive = game.snakes.find(s => s.alive) || null;
 
       if (aliveCount <= 1) {
         game.over = true;
+        saveSettings();
         game.winner = lastAlive;
         statusEl.innerHTML = game.winner
-          ? `<span class="winner">${game.winner.name} wins!</span>`
+          ? `<span class="winner">${esc(game.winner.name)} wins!</span>`
           : `<span class="winner">No one survived.</span>`;
         playSfx('gameover');
       }
@@ -869,54 +1249,219 @@ function startMusic() {
       ctx.stroke();
     }
 
+    function traceTrail(points, maxGap) {
+      ctx.beginPath();
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        if (i === 0) { ctx.moveTo(p.x, p.y); continue; }
+        const q = points[i - 1];
+        // break the line at holes / wrap-arounds instead of bridging them
+        if (Math.hypot(p.x - q.x, p.y - q.y) > maxGap) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+    }
+
     function render() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (!game) return;
+      const time = game.time || 0;
 
+      if (game.shake > 0) ctx.translate((Math.random() - 0.5) * game.shake, (Math.random() - 0.5) * game.shake);
+
+      // 0) underground tunnels (very bottom layer, erases the background look)
+      ctx.drawImage(tunnelCanvas, 0, 0);
+
+      // 1) holes (bottom layer, bodies are drawn above)
       for (const s of game.snakes) {
-        if (!s.alive && s.body.length === 0) continue;
-
-        for (let i = s.body.length - 1; i > 0; i--) {
-          const thickness = Math.max(4, 12 - i * 0.03);
-          drawTrailSegment(s.body[i], s.body[i - 1], s.color, thickness);
-        }
-
-        for (const spike of s.spikes || []) {
-          ctx.fillStyle = "#ffd166";
+        for (const h of s.holes || []) {
+          const g = ctx.createRadialGradient(h.x, h.y, 2, h.x, h.y, 15);
+          g.addColorStop(0, "rgba(0,0,0,0.95)");
+          g.addColorStop(0.6, "rgba(25,10,5,0.75)");
+          g.addColorStop(1, "rgba(255,120,40,0)");
+          ctx.fillStyle = g;
           ctx.beginPath();
-          ctx.arc(spike.x, spike.y, 5, 0, Math.PI * 2);
+          ctx.arc(h.x, h.y, 15, 0, Math.PI * 2);
           ctx.fill();
-        }
-
-        for (const p of s.projectiles) {
-          ctx.fillStyle = s.type.id === "crook" ? "#c084fc" : "#ffffff";
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, 9, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = s.color;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (s.flyTimer > 0) {
-          ctx.strokeStyle = "rgba(255,255,255,0.35)";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(s.x, s.y, 14, 0, Math.PI * 2);
-          ctx.stroke();
         }
       }
 
+      // 2) glowing trails
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const s of game.snakes) {
+        const pts = s.alive ? [{ x: s.x, y: s.y }, ...s.body] : s.body;
+        if (pts.length < 2) continue;
+        const maxGap = s.bodySpacing * 1.6;
+        ctx.save();
+        ctx.globalAlpha = s.alive ? 1 : 0.4;
+        ctx.shadowColor = s.color;
+        ctx.shadowBlur = s.alive ? 16 : 0;
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 9;
+        traceTrail(pts, maxGap);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "rgba(255,255,255,0.35)";
+        ctx.lineWidth = 3;
+        traceTrail(pts, maxGap);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 3) spikes (rotating glowing stars)
+      for (const s of game.snakes) {
+        for (const sp of s.spikes || []) {
+          ctx.save();
+          ctx.translate(sp.x, sp.y);
+          ctx.rotate(time * 2 + sp.x);
+          ctx.shadowColor = "#ff9f1c";
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = "#ffd166";
+          ctx.beginPath();
+          for (let k = 0; k < 12; k++) {
+            const r = k % 2 === 0 ? 9 : 3.5;
+            const a = (Math.PI * k) / 6;
+            ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // 3b) bombs (pulsing faster as the fuse runs out) + blast rings
+      for (const b of game.bombs || []) {
+        const urgency = 1 - b.timer / BOMB_FUSE;
+        const pulse = 0.5 + 0.5 * Math.sin(time * (4 + urgency * 20));
+        ctx.save();
+        ctx.strokeStyle = `rgba(255,80,40,${0.15 + 0.25 * pulse})`;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath(); ctx.arc(b.x, b.y, BOMB_TRIGGER_RADIUS, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowColor = "#ff3b1f";
+        ctx.shadowBlur = 10 + 20 * pulse;
+        ctx.fillStyle = "#1b1b1f";
+        ctx.beginPath(); ctx.arc(b.x, b.y, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = b.color; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = `rgba(255,${120 + 100 * pulse},40,1)`;
+        ctx.beginPath(); ctx.arc(b.x + 6, b.y - 8, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.fillText(Math.ceil(b.timer), b.x, b.y + 24);
+        ctx.restore();
+      }
+      for (const bl of game.blasts || []) {
+        const k = bl.t / 25;
+        ctx.save();
+        ctx.strokeStyle = `rgba(255,170,60,${1 - k})`;
+        ctx.lineWidth = 6 * (1 - k) + 1;
+        ctx.beginPath(); ctx.arc(bl.x, bl.y, BOMB_BLAST_RADIUS * (0.3 + 0.7 * k), 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+
+      // 4) projectiles with fading tails
+      for (const s of game.snakes) {
+        const pc = s.type.id === "crook" ? "#c084fc" : "#ffe08a";
+        for (const p of s.projectiles) {
+          (p.trail || []).forEach((t, k, arr) => {
+            ctx.globalAlpha = (k + 1) / arr.length * 0.5;
+            ctx.fillStyle = pc;
+            ctx.beginPath();
+            ctx.arc(t.x, t.y, 2 + 4 * (k + 1) / arr.length, 0, Math.PI * 2);
+            ctx.fill();
+          });
+          ctx.globalAlpha = 1;
+          ctx.save();
+          ctx.shadowColor = pc;
+          ctx.shadowBlur = 20;
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // 5) heads with eyes
+      for (const s of game.snakes) {
+        if (!s.alive) continue;
+        ctx.save();
+        if (s.speedTimer > 0) {
+          ctx.strokeStyle = "rgba(255,255,255,0.4)";
+          ctx.lineWidth = 2;
+          for (let k = -1; k <= 1; k++) {
+            const ox = Math.cos(s.angle + Math.PI / 2) * k * 6;
+            const oy = Math.sin(s.angle + Math.PI / 2) * k * 6;
+            ctx.beginPath();
+            ctx.moveTo(s.x + ox - Math.cos(s.angle) * 14, s.y + oy - Math.sin(s.angle) * 14);
+            ctx.lineTo(s.x + ox - Math.cos(s.angle) * 34, s.y + oy - Math.sin(s.angle) * 34);
+            ctx.stroke();
+          }
+        }
+        ctx.shadowColor = s.color;
+        ctx.shadowBlur = 24;
+        ctx.fillStyle = s.color;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        for (const side of [-0.55, 0.55]) {
+          const ex = s.x + Math.cos(s.angle + side) * 5;
+          const ey = s.y + Math.sin(s.angle + side) * 5;
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath(); ctx.arc(ex, ey, 2.6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#000000";
+          ctx.beginPath(); ctx.arc(ex + Math.cos(s.angle) * 1, ey + Math.sin(s.angle) * 1, 1.3, 0, Math.PI * 2); ctx.fill();
+        }
+        if (s.flyTimer > 0) {
+          ctx.strokeStyle = "rgba(255,255,255,0.5)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 17 + Math.sin(time * 14) * 3, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        // name tag
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.fillText(s.name, s.x, s.y - 20);
+        ctx.restore();
+      }
+
+      // 6) particles (additive)
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const p of game.particles || []) {
+        ctx.globalAlpha = Math.max(0, p.life / p.max);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // 7) game over overlay
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       if (game.over) {
-        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.textAlign = "center";
+        ctx.font = "800 72px system-ui, sans-serif";
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = game.winner ? game.winner.color : "#ffffff";
+        ctx.fillStyle = game.winner ? game.winner.color : "#ffffff";
+        ctx.fillText(game.winner ? `${game.winner.name} wins!` : "No one survived", canvas.width / 2, canvas.height / 2);
+        ctx.shadowBlur = 0;
+        ctx.font = "500 22px system-ui, sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.75)";
+        ctx.fillText("Press \"Back to menu\" for a new match", canvas.width / 2, canvas.height / 2 + 50);
       }
     }
 
@@ -925,10 +1470,322 @@ function startMusic() {
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
       tick(dt);
+      if (net.mode === 'host' && net.started) hostBroadcastState();
+      updateParticles();
       render();
     }
 
+    // =====================================================================
+    // ONLINE MULTIPLAYER (host-authoritative, PeerJS / WebRTC)
+    //  - host simulates the game, guests send key states, host streams state
+    // =====================================================================
+    const hostBtn = document.getElementById("hostBtn");
+    const onlineIdle = document.getElementById("onlineIdle");
+    const onlineLobby = document.getElementById("onlineLobby");
+    const onlineMsg = document.getElementById("onlineMsg");
+    const onlineStatus = document.getElementById("onlineStatus");
+    const inviteRow = document.getElementById("inviteRow");
+    const inviteLink = document.getElementById("inviteLink");
+    const lobbyList = document.getElementById("lobbyList");
+    const readyBtn = document.getElementById("readyBtn");
+
+    if (location.protocol === "file:") {
+      onlineMsg.textContent = "Note: for friends to join, this HTML file must be hosted on a web server (e.g. GitHub Pages / Netlify).";
+    }
+
+    // input lookup: host reads remote inputs for guests, local keys for itself
+    function isDown(pi, action) {
+      if (net.mode === 'host' && net.started) {
+        if (pi === 0) return keysDown.has(controlsConfig[0][action]);
+        const r = net.remoteInputs[pi];
+        return !!(r && r[action]);
+      }
+      return keysDown.has(controlsConfig[pi][action]);
+    }
+
+    function me() {
+      const p = playersConfig[0] || {};
+      return { name: (p.name || "Player").slice(0, 20), type: p.type || "killer", color: p.color };
+    }
+
+    function fixColors() {
+      const used = new Set();
+      for (const e of net.lobby) {
+        if (!COLORS.includes(e.color) || used.has(e.color)) e.color = COLORS.find(c => !used.has(c));
+        used.add(e.color);
+      }
+    }
+
+    function cleanLobby() { return net.lobby.map(({ conn, ...p }) => p); }
+
+    function renderLobby(lobby, you) {
+      lobbyList.innerHTML = "";
+      lobby.forEach((p, i) => {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;gap:8px;color:#dbe4ee";
+        const dot = document.createElement("span");
+        dot.style.cssText = `width:14px;height:14px;border-radius:50%;flex:none;background:${COLORS.includes(p.color) ? p.color : "#888"}`;
+        const txt = document.createElement("span");
+        const t = TYPES.find(t => t.id === p.type);
+        txt.textContent = `${p.name} — ${t ? t.name : "?"}${i === 0 ? " [host]" : ""}${i === you ? " (you)" : ""}   ${p.ready ? "✅ Ready" : "⏳ Not ready"}`;
+        row.append(dot, txt);
+        lobbyList.appendChild(row);
+      });
+      const mine = lobby[you];
+      readyBtn.textContent = mine && mine.ready ? "Not ready" : "Ready";
+      onlineStatus.textContent = lobby.length < 2 ? "Waiting for players to join…"
+        : lobby.every(p => p.ready) ? "Starting…" : "The battle starts when everyone is ready.";
+    }
+
+    function broadcastLobby() {
+      const lobby = cleanLobby();
+      net.lobby.forEach((e, i) => { if (e.conn && e.conn.open) e.conn.send({ t: 'lobby', lobby, you: i }); });
+      renderLobby(lobby, 0);
+    }
+
+    function showLobby(isHost) {
+      onlineIdle.style.display = "none";
+      onlineLobby.style.display = "block";
+      inviteRow.style.display = isHost ? "block" : "none";
+    }
+
+    function leaveOnline(msg) {
+      try { if (net.peer) net.peer.destroy(); } catch (e) {}
+      Object.assign(net, { mode: null, peer: null, conn: null, lobby: [], you: 0, started: false, remoteInputs: {}, sfxQueue: [] });
+      if (raf) cancelAnimationFrame(raf);
+      game = null;
+      showMenu();
+      buildSetup();
+      onlineIdle.style.display = "block";
+      onlineLobby.style.display = "none";
+      history.replaceState(null, "", location.pathname);
+      onlineMsg.textContent = msg || "";
+    }
+
+    // ---------------- HOST ----------------
+    hostBtn.addEventListener("click", () => {
+      if (typeof Peer === "undefined") { onlineMsg.textContent = "PeerJS failed to load (no internet?)."; return; }
+      net.mode = 'host';
+      net.peer = new Peer();
+      onlineMsg.textContent = "Connecting…";
+      net.peer.on("open", id => {
+        inviteLink.value = `${location.origin}${location.pathname}?join=${id}`;
+        net.lobby = [{ conn: null, ...me(), ready: false }];
+        fixColors();
+        showLobby(true);
+        broadcastLobby();
+      });
+      net.peer.on("connection", c => {
+        if (net.started || net.lobby.length >= 4) {
+          c.on("open", () => { c.send({ t: 'full' }); setTimeout(() => c.close(), 500); });
+          return;
+        }
+        c.on("data", d => onHostData(c, d));
+        c.on("close", () => onHostDisconnect(c));
+      });
+      net.peer.on("error", e => { onlineStatus.textContent = onlineMsg.textContent = "Network error: " + e.type; });
+    });
+
+    function onHostData(c, d) {
+      if (!d || typeof d !== "object") return;
+      if (d.t === 'hello' || d.t === 'ready') {
+        let e = net.lobby.find(p => p.conn === c);
+        if (!e) {
+          if (net.started || net.lobby.length >= 4) return;
+          e = { conn: c, ready: false };
+          net.lobby.push(e);
+        }
+        e.name = String(d.name || "Guest").slice(0, 20);
+        e.type = TYPES.some(t => t.id === d.type) ? d.type : "killer";
+        e.color = d.color;
+        if (d.t === 'ready') e.ready = !!d.ready;
+        fixColors();
+        broadcastLobby();
+        checkStart();
+      } else if (d.t === 'input') {
+        const i = net.lobby.findIndex(p => p.conn === c);
+        if (i > 0) net.remoteInputs[i] = { left: !!d.left, right: !!d.right, special: !!d.special };
+      }
+    }
+
+    function onHostDisconnect(c) {
+      const i = net.lobby.findIndex(p => p.conn === c);
+      if (i < 0) return;
+      if (net.started) {
+        net.lobby[i].conn = null;
+        net.lobby[i].gone = true;
+        if (game) game.snakes.forEach(s => { if (s.playerIndex === i) s.alive = false; });
+        statusEl.textContent = `${net.lobby[i].name} disconnected.`;
+      } else {
+        net.lobby.splice(i, 1);
+        broadcastLobby();
+      }
+    }
+
+    function checkStart() {
+      if (net.mode !== 'host' || net.started) return;
+      if (net.lobby.length >= 2 && net.lobby.every(p => p.ready)) setTimeout(startOnline, 800);
+    }
+
+    function startOnline() {
+      if (net.started || !net.lobby.every(p => p.ready) || net.lobby.length < 2) return;
+      net.started = true;
+      net.remoteInputs = {};
+      net.sfxQueue = [];
+      net.sentOver = false;
+      playersConfig = net.lobby.map((p, i) => ({ id: i, type: p.type, name: p.name, color: p.color }));
+      net.lobby.forEach(p => { if (p.conn) p.conn.send({ t: 'start' }); });
+      if (raf) cancelAnimationFrame(raf);
+      initGame();
+      showGame();
+      lastTime = performance.now();
+      loop(lastTime);
+    }
+
+    function snapshot() {
+      const R = v => Math.round(v);
+      return {
+        time: game.time, over: game.over, shake: game.shake,
+        winner: game.winner ? { name: game.winner.name, color: game.winner.color } : null,
+        bombs: game.bombs.map(b => ({ x: R(b.x), y: R(b.y), timer: b.timer, color: b.color })),
+        blasts: game.blasts,
+        sfx: net.sfxQueue.splice(0),
+        snakes: game.snakes.map(s => ({
+          playerIndex: s.playerIndex, type: s.type.id, color: s.color, name: s.name,
+          x: s.x, y: s.y, angle: s.angle, alive: s.alive, isClone: !!s.isClone,
+          cooldown: s.cooldown, maxCooldown: s.maxCooldown, flyTimer: s.flyTimer, speedTimer: s.speedTimer,
+          body: s.body.map(p => [R(p.x), R(p.y)]),
+          holes: (s.holes || []).map(h => [R(h.x), R(h.y)]),
+          spikes: (s.spikes || []).map(sp => ({ x: R(sp.x), y: R(sp.y), r: sp.r })),
+          projectiles: s.projectiles.map(p => ({ x: R(p.x), y: R(p.y), trail: (p.trail || []).map(t => ({ x: R(t.x), y: R(t.y) })) }))
+        }))
+      };
+    }
+
+    function hostBroadcastState() {
+      if (!game) return;
+      if (net.frame++ % 2 && !game.over) return; // ~30 updates / s
+      if (game.over) { if (net.sentOver) return; net.sentOver = true; }
+      const s = snapshot();
+      net.lobby.forEach(p => { if (p.conn && p.conn.open) p.conn.send({ t: 'state', s }); });
+    }
+
+    // ---------------- GUEST ----------------
+    function joinGame(hostId) {
+      if (typeof Peer === "undefined") { onlineMsg.textContent = "PeerJS failed to load (no internet?)."; return; }
+      net.mode = 'guest';
+      net.peer = new Peer();
+      onlineMsg.textContent = "Joining game…";
+      showLobby(false);
+      onlineStatus.textContent = "Connecting to host…";
+      net.peer.on("open", () => {
+        const c = net.peer.connect(hostId, { reliable: true });
+        net.conn = c;
+        c.on("open", () => c.send({ t: 'hello', ...me() }));
+        c.on("data", onGuestData);
+        c.on("close", () => leaveOnline("Disconnected from host."));
+      });
+      net.peer.on("error", e => leaveOnline(e.type === "peer-unavailable" ? "Game not found (host left or wrong link)." : "Network error: " + e.type));
+    }
+
+    function onGuestData(d) {
+      if (!d || typeof d !== "object") return;
+      if (d.t === 'lobby') {
+        net.lobby = d.lobby; net.you = d.you;
+        renderLobby(d.lobby, d.you);
+      } else if (d.t === 'full') {
+        leaveOnline("That game is full or already running.");
+      } else if (d.t === 'start') {
+        net.started = true;
+        net.lastInput = "";
+        if (raf) cancelAnimationFrame(raf);
+        game = null;
+        clearTunnels();
+        showGame();
+        statusEl.textContent = "Match started.";
+        guestLoop();
+        sendInput();
+      } else if (d.t === 'state' && net.started) {
+        applyState(d.s);
+      } else if (d.t === 'menu') {
+        net.started = false;
+        if (raf) cancelAnimationFrame(raf);
+        game = null;
+        buildSetup();
+        showMenu();
+      }
+    }
+
+    function sendInput() {
+      if (!net.conn || !net.conn.open) return;
+      const c = controlsConfig[0];
+      const st = { left: keysDown.has(c.left), right: keysDown.has(c.right), special: keysDown.has(c.special) };
+      const key = JSON.stringify(st);
+      if (key === net.lastInput) return;
+      net.lastInput = key;
+      net.conn.send({ t: 'input', ...st });
+    }
+
+    function applyState(s) {
+      const prev = game;
+      const snakes = s.snakes.map(o => ({
+        ...o,
+        type: TYPES.find(t => t.id === o.type) || TYPES[0],
+        bodySpacing: 12,
+        body: o.body.map(([x, y]) => ({ x, y })),
+        holes: o.holes.map(([x, y]) => ({ x, y }))
+      }));
+      game = { ...s, snakes, particles: prev ? prev.particles : [] };
+      snakes.forEach((sn, k) => {
+        const p = prev && prev.snakes[k];
+        if (!p) return;
+        if (sn.alive && sn.flyTimer <= 0) digTunnel(p.x, p.y, sn.x, sn.y);
+        if (p.alive && !sn.alive) {
+          spawnParticles(sn.x, sn.y, sn.color, 60, 6, 60);
+          spawnParticles(sn.x, sn.y, "#ffffff", 20, 3, 30);
+        }
+      });
+      (s.sfx || []).forEach(n => playSfx(n));
+      if (s.over && !(prev && prev.over)) {
+        statusEl.innerHTML = s.winner
+          ? `<span class="winner">${esc(s.winner.name)} wins!</span>`
+          : `<span class="winner">No one survived.</span>`;
+      }
+      updateHud();
+    }
+
+    function guestLoop() {
+      raf = requestAnimationFrame(guestLoop);
+      updateParticles();
+      render();
+    }
+
+    // ---------------- lobby buttons ----------------
+    readyBtn.addEventListener("click", () => {
+      if (net.mode === 'host') {
+        const e = net.lobby[0];
+        Object.assign(e, me());
+        e.ready = !e.ready;
+        fixColors();
+        broadcastLobby();
+        checkStart();
+      } else if (net.mode === 'guest' && net.conn && net.conn.open) {
+        const cur = net.lobby[net.you];
+        net.conn.send({ t: 'ready', ready: !(cur && cur.ready), ...me() });
+      }
+    });
+    document.getElementById("leaveBtn").addEventListener("click", () => leaveOnline("Left the online game."));
+    document.getElementById("copyLinkBtn").addEventListener("click", () => {
+      navigator.clipboard?.writeText(inviteLink.value);
+      inviteLink.select();
+      onlineStatus.textContent = "Link copied — send it to your friends!";
+    });
+
     buildSetup();
+
+    // auto-join when opened via an invite link (?join=<hostId>)
+    const joinId = new URLSearchParams(location.search).get("join");
+    if (joinId) joinGame(joinId);
   </script>
 </body>
 </html>
