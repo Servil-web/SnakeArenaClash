@@ -112,6 +112,37 @@
     .swatch{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;box-shadow:0 0 0 1px rgba(255,255,255,.15)}
     .swatch.selected{border-color:#fff;box-shadow:0 0 12px var(--sc)}
     .swatch.taken{opacity:.25;cursor:not-allowed}
+
+    /* ---- Full HD layout: game screen fits the viewport, canvas centred at 16:9 ---- */
+    html,body{height:100%}
+    body{min-height:100vh; margin:0; display:flex; align-items:center; justify-content:center}
+    .app{width:99vw; max-width:1910px; margin:0 auto; padding:4px}
+    #gameScreen .game-wrap{padding:6px 8px; display:flex; flex-direction:column; align-items:center}
+    #gameScreen .hud-item .small:nth-child(n+4){display:none} /* compact HUD: name, special, status, bar */
+    #gameScreen .hud-item .bar-wrap{display:block}
+    #gameScreen .titlebar{width:100%; margin-bottom:8px}
+    #gameScreen .titlebar h2{margin:0; font-size:1.2rem}
+    #gameScreen .titlebar p{margin:2px 0 0; font-size:.85rem}
+    #gameScreen .btn{padding:8px 12px; margin-bottom:0}
+    .hud{width:100%; gap:8px; margin-bottom:8px}
+    .hud-item{padding:6px 10px; font-size:.82rem}
+    .hud-item .small{font-size:.78rem}
+    .bar-wrap{margin-top:4px; height:8px}
+    canvas{
+      width:auto; height:auto;
+      max-width:100%;
+      max-height:calc(100vh - 130px);
+      aspect-ratio:16/9;
+      margin:0 auto;
+    }
+    #status{width:100%; margin-top:8px; padding:8px 12px}
+    /* extra-wide playfield: drop secondary info lines during a match */
+    #gameScreen #gameHint{display:none}
+    #gameScreen .hud-item .small:nth-child(2){display:none}
+    #gameScreen #status{display:none}
+    #gameScreen .titlebar{margin-bottom:4px}
+    .hud{margin-bottom:4px}
+    #menuScreen{max-height:calc(100vh - 20px); overflow-y:auto}
   </style>
 </head>
 <body>
@@ -273,6 +304,28 @@
     let sfxGain = null;
     let musicNodes = [];
     let musicPlaying = false;
+    // dynamic pitch shift (semitones): snakes close together = higher, far apart = lower
+    let musicPitch = 0;
+    let musicPitchTarget = 0;
+
+    function updateMusicTension() {
+      let target = 0;
+      if (game && !game.over) {
+        const heads = game.snakes.filter(s => s.alive);
+        let minD = Infinity;
+        for (let i = 0; i < heads.length; i++)
+          for (let j = i + 1; j < heads.length; j++)
+            if (heads[i].playerIndex !== heads[j].playerIndex)
+              minD = Math.min(minD, Math.hypot(heads[i].x - heads[j].x, heads[i].y - heads[j].y));
+        if (minD < Infinity) {
+          // 60px -> +7 semitones, ~900px+ -> -5 semitones
+          const k = Math.max(0, Math.min(1, (minD - 60) / 840));
+          target = 7 - k * 12;
+        }
+      }
+      musicPitchTarget = target;
+      musicPitch += (musicPitchTarget - musicPitch) * 0.05; // smooth glide
+    }
 
     function initMusic() {
       if (audioCtx) return;
@@ -347,12 +400,19 @@
       // ---- song arrangement: sections with different melody / bass / drums ----
       const leadB = [30,null,28,26,28,null,23,null,26,25,23,21,23,null,null,18,
                      21,23,25,26,28,26,25,23,25,null,21,null,18,null,null,null];
+      const leadD = [18,21,25,28,26,25,23,21,23,null,23,25,26,null,28,30,
+                     30,28,26,25,26,28,30,33,35,null,33,30,28,null,26,null];
       const SECTIONS = [
         { name:'A',  len:64, lead:i => lead[i % lead.length], tr:0, bass:[11,11,6,6,4,4,9,9], arp:[0,4,7,12], drums:'full' },
         { name:'A2', len:64, lead:i => lead[i % lead.length], tr:5, bass:[4,4,11,11,9,9,2,2], arp:[0,3,7,12], drums:'full' },
         { name:'B',  len:64, lead:i => leadB[i % leadB.length], tr:0, bass:[4,4,9,9,11,11,6,6], arp:[0,7,12,7], drums:'half' },
         { name:'A',  len:64, lead:i => lead[i % lead.length] + (i % 16 === 15 ? 12 : 0), tr:0, bass:[11,11,6,6,4,4,9,9], arp:[0,4,7,12], drums:'full' },
-        { name:'C',  len:32, lead:() => null, tr:0, bass:[9,9,6,6], arp:[0,5,9,12], drums:'break' }
+        { name:'C',  len:32, lead:() => null, tr:0, bass:[9,9,6,6], arp:[0,5,9,12], drums:'break' },
+        { name:'D',  len:64, lead:i => leadD[i % leadD.length], tr:0, bass:[6,6,11,11,9,9,4,4], arp:[0,4,7,11], drums:'full' },
+        { name:'D2', len:64, lead:i => leadD[i % leadD.length] + (i % 32 < 16 ? 0 : 12), tr:2, bass:[4,4,9,9,6,6,11,11], arp:[0,3,7,10], drums:'half' },
+        { name:'B2', len:64, lead:i => { const n = leadB[i % leadB.length]; return n == null ? null : n + 12; }, tr:-2, bass:[9,9,4,4,6,6,11,11], arp:[0,7,12,16], drums:'full' },
+        { name:'A3', len:64, lead:i => lead[(i * 2) % lead.length], tr:7, bass:[11,11,6,6,4,4,9,9], arp:[0,4,7,12], drums:'full' },
+        { name:'C2', len:32, lead:i => (i % 8 === 0 ? 35 : null), tr:0, bass:[11,11,4,4], arp:[0,7,12,19], drums:'break' }
       ];
       const SONG_LEN = SECTIONS.reduce((a, s) => a + s.len, 0);
       function sectionAt(n) {
@@ -365,15 +425,16 @@
         while (nextTime < audioCtx.currentTime + 0.3) {
           const { s: sec, i } = sectionAt(idx);
           const fill = i >= sec.len - 4; // drum fill at end of every section
+          const pt = Math.round(musicPitch); // proximity pitch shift (whole semitones stay in tune)
 
           // pulse 1: lead (null = rest)
           const note = sec.lead(i);
           if (note != null) {
-            const f = 220 * Math.pow(2, (note + sec.tr) / 12);
+            const f = 220 * Math.pow(2, (note + sec.tr + pt) / 12);
             track(synthTone(musicGain, 'square', f, nextTime, step * 0.6, 0.1));
           }
           // pulse 2: fast arpeggio
-          const root = sec.bass[Math.floor(i / 8) % sec.bass.length] + sec.tr;
+          const root = sec.bass[Math.floor(i / 8) % sec.bass.length] + sec.tr + pt;
           for (let k = 0; k < 3; k++) {
             const af = 440 * Math.pow(2, (root + sec.arp[(i + k) % 4]) / 12);
             track(synthTone(musicGain, 'square', af, nextTime + k * step / 3, step / 3 * 0.9, sec.drums === 'break' ? 0.05 : 0.035));
@@ -414,37 +475,48 @@
       }
       musicNodes = [];
       musicPlaying = false;
-      // update any music buttons in the UI
-      document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => { if (b) b.textContent = 'Music'; });
     }
 
-    // wire up music button after DOM exists
     let musicLoopTimer = null;
+    // music preference (button) + whether a match is currently running
+    let musicEnabled = true;
+    let matchActive = false;
+
+    function refreshMusicBtns() {
+      document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => {
+        b.textContent = musicEnabled ? 'Music: ON' : 'Music: OFF';
+        b.classList.toggle('off', !musicEnabled);
+      });
+    }
 
     function enableMusic() {
       initMusic();
       if (!audioCtx) return;
-      // try to resume (may be blocked until user gesture by browser)
       if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
       startMusic();
-      document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => { if (b) b.textContent = 'Music: ON'; });
+    }
+
+    // music plays only while a match is running
+    function matchMusicStart() {
+      matchActive = true;
+      stopMusic(); // restart the song from the beginning
+      if (musicEnabled) enableMusic();
+    }
+    function matchMusicStop() {
+      matchActive = false;
+      stopMusic();
     }
 
     window.addEventListener('DOMContentLoaded', () => {
       const buttons = Array.from(document.querySelectorAll('#musicBtn, #musicBtnMenu'));
-      if (buttons.length === 0) return;
-
-      // attempt to start music automatically on load
-      enableMusic();
+      refreshMusicBtns();
 
       buttons.forEach(mb => {
         mb.addEventListener('click', () => {
-          if (!musicPlaying) {
-            enableMusic();
-          } else {
-            stopMusic();
-            document.querySelectorAll('#musicBtn, #musicBtnMenu').forEach(b => { if (b) b.textContent = 'Music'; });
-          }
+          musicEnabled = !musicEnabled;
+          refreshMusicBtns();
+          if (musicEnabled && matchActive) enableMusic();
+          else stopMusic();
         });
       });
 
@@ -696,6 +768,7 @@
       const wasOnline = net.started;
       net.started = false;
       game = null;
+      matchMusicStop();
       if (wasOnline) {
         buildSetup(); // restore local player settings
         if (net.mode === 'host') {
@@ -715,6 +788,7 @@
       if (raf) cancelAnimationFrame(raf);
       initGame();
       showGame();
+      matchMusicStart();
       lastTime = performance.now();
       loop(lastTime);
     });
@@ -1227,6 +1301,7 @@
 
       if (aliveCount <= 1) {
         game.over = true;
+        matchMusicStop();
         saveSettings();
         game.winner = lastAlive;
         statusEl.innerHTML = game.winner
@@ -1264,6 +1339,7 @@
     function render() {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      updateMusicTension();
       if (!game) return;
       const time = game.time || 0;
 
@@ -1554,6 +1630,7 @@
       Object.assign(net, { mode: null, peer: null, conn: null, lobby: [], you: 0, started: false, remoteInputs: {}, sfxQueue: [] });
       if (raf) cancelAnimationFrame(raf);
       game = null;
+      matchMusicStop();
       showMenu();
       buildSetup();
       onlineIdle.style.display = "block";
@@ -1638,6 +1715,7 @@
       if (raf) cancelAnimationFrame(raf);
       initGame();
       showGame();
+      matchMusicStart();
       lastTime = performance.now();
       loop(lastTime);
     }
@@ -1703,12 +1781,14 @@
         clearTunnels();
         showGame();
         statusEl.textContent = "Match started.";
+        matchMusicStart();
         guestLoop();
         sendInput();
       } else if (d.t === 'state' && net.started) {
         applyState(d.s);
       } else if (d.t === 'menu') {
         net.started = false;
+        matchMusicStop();
         if (raf) cancelAnimationFrame(raf);
         game = null;
         buildSetup();
@@ -1747,6 +1827,7 @@
       });
       (s.sfx || []).forEach(n => playSfx(n));
       if (s.over && !(prev && prev.over)) {
+        matchMusicStop();
         statusEl.innerHTML = s.winner
           ? `<span class="winner">${esc(s.winner.name)} wins!</span>`
           : `<span class="winner">No one survived.</span>`;
