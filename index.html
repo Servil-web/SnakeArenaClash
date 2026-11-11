@@ -195,6 +195,16 @@
             <button class="btn" id="hostBtn">Host online game</button>
             <div class="small">Uses your Player 1 name, type, color and controls. Send the invite link to friends.</div>
             <div class="small" id="onlineMsg"></div>
+            <details style="margin-top:10px">
+              <summary class="small" style="cursor:pointer">Connection settings (TURN relay — needed when players are on different networks)</summary>
+              <div class="small" style="margin-top:6px">Get free credentials at <b>metered.ca</b> (Open Relay / TURN server) and paste them here. Only the host needs to fill this in — the invite link carries it to guests.</div>
+              <input id="turnUrl" placeholder="TURN url, e.g. turn:global.relay.metered.ca:443?transport=tcp" />
+              <input id="turnUser" placeholder="Username" />
+              <input id="turnPass" placeholder="Credential / password" />
+              <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:6px">
+                <input type="checkbox" id="turnForce" style="width:auto;margin:0" /> Force relay (use if direct connection keeps failing)
+              </label>
+            </details>
           </div>
           <div id="onlineLobby" style="display:none;">
             <div id="inviteRow">
@@ -1639,30 +1649,69 @@
       onlineMsg.textContent = msg || "";
     }
 
-    // ---- WebRTC config: STUN + TURN relays so players behind different routers/firewalls can connect ----
-    // Replace the TURN entries with your own (free account at metered.ca / expressturn.com) if these stop working.
-    const PEER_OPTIONS = {
-      debug: 1,
-      config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:global.stun.twilio.com:3478" },
-          { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
-        ]
+    // ---- WebRTC config: STUN + optional user-provided TURN relay ----
+    const turnUrlEl = document.getElementById("turnUrl");
+    const turnUserEl = document.getElementById("turnUser");
+    const turnPassEl = document.getElementById("turnPass");
+    const turnForceEl = document.getElementById("turnForce");
+    const TURN_KEY = "snakeClashTurn";
+    let turnCfg = null; // { url, user, pass, force }
+
+    try { turnCfg = JSON.parse(localStorage.getItem(TURN_KEY) || "null"); } catch (e) {}
+    // guests receive the host's relay settings through the invite link
+    try {
+      const t = new URLSearchParams(location.search).get("turn");
+      if (t) turnCfg = JSON.parse(atob(decodeURIComponent(t)));
+    } catch (e) {}
+    if (turnCfg) {
+      turnUrlEl.value = turnCfg.url || ""; turnUserEl.value = turnCfg.user || "";
+      turnPassEl.value = turnCfg.pass || ""; turnForceEl.checked = !!turnCfg.force;
+    }
+    function readTurnInputs() {
+      const url = turnUrlEl.value.trim();
+      turnCfg = url ? { url, user: turnUserEl.value.trim(), pass: turnPassEl.value.trim(), force: turnForceEl.checked } : null;
+      try { localStorage.setItem(TURN_KEY, JSON.stringify(turnCfg)); } catch (e) {}
+    }
+
+    function peerOptions() {
+      const iceServers = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:global.stun.twilio.com:3478" }
+      ];
+      if (turnCfg && turnCfg.url) {
+        // also try the common UDP/TCP/TLS variants of the same relay host
+        const base = turnCfg.url.replace(/^turns?:/, "").replace(/\?.*$/, "").replace(/:\d+$/, "");
+        const urls = [turnCfg.url, `turn:${base}:80`, `turn:${base}:80?transport=tcp`, `turn:${base}:443?transport=tcp`, `turns:${base}:443?transport=tcp`];
+        iceServers.push({ urls: [...new Set(urls)], username: turnCfg.user, credential: turnCfg.pass });
       }
-    };
+      return { debug: 2, config: { iceServers, iceTransportPolicy: turnCfg && turnCfg.force ? "relay" : "all" } };
+    }
+
+    // show ICE progress so connection problems are visible
+    function watchIce(conn, label) {
+      const pc = conn.peerConnection;
+      if (!pc) return;
+      pc.addEventListener("iceconnectionstatechange", () => {
+        console.log(`[${label}] ICE:`, pc.iceConnectionState);
+        if (net.started) return;
+        if (pc.iceConnectionState === "checking") onlineStatus.textContent = "Negotiating connection…";
+        if (pc.iceConnectionState === "failed") onlineStatus.textContent = turnCfg
+          ? "Connection failed even with relay — check TURN credentials."
+          : "Direct connection blocked. Host must add TURN relay settings (Connection settings).";
+      });
+    }
 
     // ---------------- HOST ----------------
     hostBtn.addEventListener("click", () => {
       if (typeof Peer === "undefined") { onlineMsg.textContent = "PeerJS failed to load (no internet?)."; return; }
+      readTurnInputs();
       net.mode = 'host';
-      net.peer = new Peer(PEER_OPTIONS);
+      net.peer = new Peer(peerOptions());
       onlineMsg.textContent = "Connecting…";
       net.peer.on("open", id => {
-        inviteLink.value = `${location.origin}${location.pathname}?join=${id}`;
+        const turnParam = turnCfg ? `&turn=${encodeURIComponent(btoa(JSON.stringify(turnCfg)))}` : "";
+        inviteLink.value = `${location.origin}${location.pathname}?join=${id}${turnParam}`;
         net.lobby = [{ conn: null, ...me(), ready: false }];
         fixColors();
         showLobby(true);
@@ -1673,6 +1722,7 @@
           c.on("open", () => { c.send({ t: 'full' }); setTimeout(() => c.close(), 500); });
           return;
         }
+        setTimeout(() => watchIce(c, "host"), 0);
         c.on("data", d => onHostData(c, d));
         c.on("close", () => onHostDisconnect(c));
       });
@@ -1768,17 +1818,20 @@
     function joinGame(hostId) {
       if (typeof Peer === "undefined") { onlineMsg.textContent = "PeerJS failed to load (no internet?)."; return; }
       net.mode = 'guest';
-      net.peer = new Peer(PEER_OPTIONS);
+      net.peer = new Peer(peerOptions());
       onlineMsg.textContent = "Joining game…";
       showLobby(false);
       onlineStatus.textContent = "Connecting to host…";
       net.peer.on("open", () => {
         const c = net.peer.connect(hostId, { reliable: true });
         net.conn = c;
+        setTimeout(() => watchIce(c, "guest"), 0);
         // give up with a clear message if the connection can't be established
         const timeout = setTimeout(() => {
-          if (!c.open) leaveOnline("Could not reach the host (network/firewall blocked the connection). Try again or use a different network.");
-        }, 20000);
+          if (!c.open) leaveOnline(turnCfg
+            ? "Could not reach the host even via relay. Check the host's TURN credentials or try another network."
+            : "Could not reach the host — your networks block direct connections. The host must add TURN relay settings (Online multiplayer → Connection settings) and send a new link.");
+        }, 30000);
         c.on("open", () => { clearTimeout(timeout); c.send({ t: 'hello', ...me() }); });
         c.on("data", onGuestData);
         c.on("close", () => leaveOnline("Disconnected from host."));
