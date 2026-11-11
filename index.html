@@ -1639,11 +1639,27 @@
       onlineMsg.textContent = msg || "";
     }
 
+    // ---- WebRTC config: STUN + TURN relays so players behind different routers/firewalls can connect ----
+    // Replace the TURN entries with your own (free account at metered.ca / expressturn.com) if these stop working.
+    const PEER_OPTIONS = {
+      debug: 1,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:global.stun.twilio.com:3478" },
+          { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+          { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+        ]
+      }
+    };
+
     // ---------------- HOST ----------------
     hostBtn.addEventListener("click", () => {
       if (typeof Peer === "undefined") { onlineMsg.textContent = "PeerJS failed to load (no internet?)."; return; }
       net.mode = 'host';
-      net.peer = new Peer();
+      net.peer = new Peer(PEER_OPTIONS);
       onlineMsg.textContent = "Connecting…";
       net.peer.on("open", id => {
         inviteLink.value = `${location.origin}${location.pathname}?join=${id}`;
@@ -1752,14 +1768,18 @@
     function joinGame(hostId) {
       if (typeof Peer === "undefined") { onlineMsg.textContent = "PeerJS failed to load (no internet?)."; return; }
       net.mode = 'guest';
-      net.peer = new Peer();
+      net.peer = new Peer(PEER_OPTIONS);
       onlineMsg.textContent = "Joining game…";
       showLobby(false);
       onlineStatus.textContent = "Connecting to host…";
       net.peer.on("open", () => {
         const c = net.peer.connect(hostId, { reliable: true });
         net.conn = c;
-        c.on("open", () => c.send({ t: 'hello', ...me() }));
+        // give up with a clear message if the connection can't be established
+        const timeout = setTimeout(() => {
+          if (!c.open) leaveOnline("Could not reach the host (network/firewall blocked the connection). Try again or use a different network.");
+        }, 20000);
+        c.on("open", () => { clearTimeout(timeout); c.send({ t: 'hello', ...me() }); });
         c.on("data", onGuestData);
         c.on("close", () => leaveOnline("Disconnected from host."));
       });
